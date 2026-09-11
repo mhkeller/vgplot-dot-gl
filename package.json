@@ -1,0 +1,48 @@
+{
+  "name": "vgplot-dot-gl",
+  "version": "0.1.0",
+  "description": "A GPU-drawn drop-in for vgplot's dot mark: same API, hundreds of thousands of points, axes/legends/interactors unchanged.",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "dev": "vite demo",
+    "build:demo": "vite build demo",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:update": "playwright test --update-snapshots",
+    "test:e2e:report": "playwright show-report"
+  },
+  "license": "MIT",
+  "peerDependencies": {
+    "@observablehq/plot": "^0.6.17",
+    "@uwdata/mosaic-plot": "^0.31.0",
+    "@uwdata/mosaic-core": "^0.31.0",
+    "@uwdata/mosaic-sql": "^0.31.0"
+  },
+  "dependencies": {
+    "d3-color": "^3.1.0"
+  },
+  "devDependencies": {
+    "@duckdb/duckdb-wasm": "1.33.1-dev57.0",
+    "@observablehq/plot": "^0.6.17",
+    "@playwright/test": "^1.63.0",
+    "@uwdata/mosaic-core": "^0.31.0",
+    "@uwdata/mosaic-plot": "^0.31.0",
+    "@uwdata/mosaic-sql": "0.31.0",
+    "@uwdata/vgplot": "^0.31.0",
+    "d3-array": "^3.2.4",
+    "d3-scale": "^4.0.2",
+    "deck.gl": "^9.4.0",
+    "jsdom": "^30.0.1",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.0"
+  },
+  "packageManager": "pnpm@11.7.0"
+}

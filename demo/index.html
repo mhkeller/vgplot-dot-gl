@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>vgplot-dot-gl demo</title>
+  <style>
+    body { margin: 0; font: 13px system-ui, sans-serif; color: #222; background: #fafafa; }
+    header.bar { display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; align-items: center; padding: 0.6rem 1rem; background: #fff; border-bottom: 1px solid #ddd; position: sticky; top: 0; z-index: 5; }
+    header.bar label { display: inline-flex; gap: 0.35rem; align-items: center; }
+    #status { font-family: ui-monospace, monospace; font-size: 12px; color: #555; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(460px, 1fr)); gap: 1rem; padding: 1rem; }
+    .panel { background: #fff; border: 1px solid #e3e3e3; border-radius: 6px; padding: 0.6rem 0.8rem; }
+    .panel h3 { margin: 0 0 0.3rem; font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; gap: 0.5rem; }
+    .panel .stats { font: 11px ui-monospace, monospace; color: #666; white-space: pre-wrap; min-height: 2.6em; }
+    .stage { position: relative; }
+    .ring { position: absolute; box-sizing: border-box; width: 11px; height: 11px; margin: -5.5px 0 0 -5.5px; border: 2px solid #111; border-radius: 50%; pointer-events: none; display: none; }
+    .tip { position: absolute; transform: translate(12px, -50%); background: #fff; border: 1px solid #bbb; border-radius: 4px; padding: 0.3rem 0.5rem; font: 11px ui-monospace, monospace; white-space: nowrap; pointer-events: none; display: none; z-index: 2; }
+    button { font: inherit; padding: 0.2rem 0.5rem; }
+  </style>
+</head>
+<body>
+  <header class="bar">
+    <strong>vgplot-dot-gl</strong>
+    <label>rows <select id="rows"><option>50000</option><option selected>500000</option><option>2000000</option></select></label>
+    <label>painter <select id="painter"><option value="gl" selected>gl (WebGL2)</option><option value="rect2d">rect2d (canvas)</option><option value="dot">dot (SVG, original)</option></select></label>
+    <label><input type="checkbox" id="benchmark"> wait for GPU (honest timings)</label>
+    <button id="rebuild">Rebuild</button>
+    <button id="zoomtest">Zoom test (2 s)</button>
+    <button id="compare">A/B vs SVG at 50k</button>
+    <span id="status">starting DuckDB…</span>
+  </header>
+  <div class="grid" id="grid"></div>
+  <div class="grid" id="ab"></div>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
