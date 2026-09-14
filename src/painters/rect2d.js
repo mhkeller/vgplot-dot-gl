@@ -1,4 +1,4 @@
-import { transformFor, affine } from '../scale-map.js';
+import { transformFor, affine, axisAffine } from '../scale-map.js';
 
 /**
  * A plain 2D canvas painter: one filled square per dot, in the same draw order
@@ -6,7 +6,7 @@ import { transformFor, affine } from '../scale-map.js';
  * the tests use it to check that the plot is hooked up right, so it has to put
  * dots exactly where the WebGL painter does.
  */
-export function paintRect2D(mark, canvas, { sx, sy, sr, frame, style }) {
+export function paintRect2D(mark, canvas, { sx, sy, sr, lines, frame, style }) {
   const t0 = performance.now();
   const { prep, data } = mark;
   const { pw, ph, dpr, offset, fx, fy } = frame;
@@ -28,8 +28,8 @@ export function paintRect2D(mark, canvas, { sx, sy, sr, frame, style }) {
   const tx = transformFor(sx, 'x');
   const ty = transformFor(sy, 'y');
   const tr = sr ? transformFor(sr, 'r') : null;
-  const ax = affine(sx, 0, -fx, 'x');
-  const ay = affine(sy, 0, -fy, 'y');
+  const ax = axisAffine(sx, lines.x, 0, -fx, 'x');
+  const ay = axisAffine(sy, lines.y, 0, -fy, 'y');
   const ar = sr ? affine(sr, 0, 0, 'r') : null;
   const rConst = style.r;
 
@@ -41,12 +41,12 @@ export function paintRect2D(mark, canvas, { sx, sy, sr, frame, style }) {
 
   ctx.globalAlpha = style.opacity;
   let current = null;
-  const { perm, codes, n } = prep;
+  const { perm, codes, hidden, n } = prep;
   let drawn = 0;
   for (let i = 0; i < n; ++i) {
     const j = perm[i];
     const code = codes[j];
-    if (code === 255) continue;
+    if (code === hidden) continue;
     const px = ax.a * tx(+X[j]) + ax.b + offset;
     const py = ay.a * ty(+Y[j]) + ay.b + offset;
     const r = R ? ar.a * tr(+R[j]) + ar.b : rConst;

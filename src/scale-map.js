@@ -11,12 +11,19 @@
  *
  * Both depend only on the scale object, so the tests compare them with the d3
  * scales Plot builds from the same domain and range.
+ *
+ * A category axis (a point or band scale) is uploaded as category codes. Its
+ * straight line comes from the pixels Plot gave the category rows
+ * (`categoryLine`), and `axisAffine` picks between the two kinds of line.
  */
 
 const identity = v => v;
 
 /** Power that keeps the sign, like d3's pow and sqrt scales do for negative numbers. */
 const power = e => v => (v < 0 ? -Math.pow(-v, e) : Math.pow(v, e));
+
+/** Farthest a category may sit from the fitted line, in pixels. */
+const CATEGORY_TOLERANCE_PX = 0.01;
 
 /** The curved part of a scale, or a clear error for scale types the mark can't draw. */
 export function transformFor(scale, name = 'position') {
@@ -26,6 +33,10 @@ export function transformFor(scale, name = 'position') {
     case 'linear':
     case 'time':
     case 'utc':
+      return identity;
+    case 'point':
+    case 'band':
+      // The uploaded values are category codes; `categoryLine` places them.
       return identity;
     case 'log':
       // The base only multiplies log values by a constant, and `affine` divides it out.
@@ -61,6 +72,32 @@ export function affine(scale, center = 0, shift = 0, name = 'position') {
   if (t1 === t0) return { a: 0, b: (r0 + r1) / 2 + shift };
   const a = (r1 - r0) / (t1 - t0);
   return { a, b: r0 + (center - t0) * a + shift };
+}
+
+/**
+ * The pixel of category code i on a point or band scale, as the line `a * i + b`.
+ * `positions` are the pixels Plot worked out for the hint rows (render's `values.x` or `values.y`),
+ * and hint row i holds category i. A band scale's dots sit in the middle of the band.
+ * Plot spaces the categories of a scale it works out itself evenly, reversed and inset axes included;
+ * an explicit domain or another mark on the same scale can break that, and then this throws.
+ */
+export function categoryLine(scale, positions, count, name = 'position') {
+  const b = positions[0];
+  const a = count > 1 ? (positions[count - 1] - positions[0]) / (count - 1) : 0;
+  for (let i = 0; i < count; ++i) {
+    if (!(Math.abs(positions[i] - (a * i + b)) <= CATEGORY_TOLERANCE_PX)) {
+      throw new Error(`dotGL: the ${name} axis doesn't place its categories evenly (an explicit domain or another mark sharing the scale); this isn't supported`);
+    }
+  }
+  return { a, b: scale.type === 'band' ? b + scale.bandwidth / 2 : b };
+}
+
+/**
+ * The per-frame line for an x or y axis, in the same form as `affine`: from the category line when
+ * the axis holds category codes, otherwise from the scale.
+ */
+export function axisAffine(scale, line, center = 0, shift = 0, name = 'position') {
+  return line ? { a: line.a, b: line.b + line.a * center + shift } : affine(scale, center, shift, name);
 }
 
 /** The pixel for one data value, worked out the same way the shader does it. */

@@ -1,4 +1,5 @@
 import type { Mark } from '@uwdata/mosaic-plot';
+import type { OrderByExpr } from '@uwdata/mosaic-sql';
 
 /** The vg.dot options (x, y, r, fill, opacity, fillOpacity, clip, ...) plus the options only this mark has. */
 export interface DotGLOptions {
@@ -10,7 +11,9 @@ export interface DotGLOptions {
   blit?: 'drawImage' | 'bitmaprenderer';
   /** '-r' draws big dots first when r is a column; null keeps the row order. Default '-r'. */
   sort?: '-r' | null;
-  /** How many different fill values are allowed. Default and maximum 254. */
+  /** What the query sorts rows by: a column name, `column()`, `desc()` or a `sql` fragment. Rows are drawn in that order. */
+  orderby?: OrderByExpr | null;
+  /** How many different fill values a database column may have. Default and maximum 65,535; array data allows 254. */
   maxCategories?: number;
   /** Wait for the graphics card after each draw so `stats` shows real times. */
   benchmark?: boolean;

@@ -64,6 +64,51 @@ test.describe('dotGL core behavior', () => {
     expect(errors).toEqual([]);
   });
 
+  test('draws a text axis and a 601-value text fill, each dot at its category in its color', async ({ page }) => {
+    const errors = await openDemo(page);
+    // 20 text x values plus null, and a different text fill per row: the fill takes two-byte codes and three palette rows.
+    // Seven colors repeat along the 601 categories, so a code read from the wrong palette row or column shows the wrong color.
+    // The dots are far enough apart not to overlap, so the pixel at each center has that dot's own color.
+    await page.evaluate(async () => {
+      const { vg, dotGL } = demo;
+      await vg.coordinator().exec(`CREATE OR REPLACE TABLE cat_grid AS
+        SELECT 'x' || lpad((i % 20)::VARCHAR, 2, '0') AS gx, (i // 20)::DOUBLE AS gy, 'f' || lpad(i::VARCHAR, 3, '0') AS name FROM range(600) t(i)
+        UNION ALL SELECT NULL, 30, NULL`);
+      const colors = ['#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00', '#a65628', '#f781bf'];
+      window.catGrid = vg.plot(dotGL(vg.from('cat_grid'), { x: 'gx', y: 'gy', fill: 'name', r: 2, painter: 'gl' }), vg.colorRange(colors), vg.width(430), vg.height(330));
+      document.body.append(window.catGrid);
+    });
+    await page.waitForFunction(() => !!catGrid.value.marks[0].stats && !catGrid.value.pendingRender, null, { timeout: 20_000 });
+    const r = await page.evaluate(() => {
+      const mark = catGrid.value.marks[0];
+      const svg = catGrid.querySelector('svg');
+      const xs = svg.scale('x'), ys = svg.scale('y'), cs = svg.scale('color');
+      const fo = svg.querySelector('foreignObject');
+      const canvas = fo.firstChild;
+      const scale = canvas.width / +fo.getAttribute('width');
+      const img = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+      const column = name => mark.data.columns[mark.channelField(name, { exact: true }).as];
+      const [X, Y, F] = [column('x'), column('y'), column('fill')];
+      const { xCats, cats } = mark.prep;
+      let bad = 0;
+      const misses = [];
+      for (let i = 0; i < X.length; ++i) {
+        const px = Math.round((xs.apply(xCats[X[i]]) - +fo.getAttribute('x')) * scale);
+        const py = Math.round((ys.apply(Y[i]) - +fo.getAttribute('y')) * scale);
+        const want = cs.apply(cats[F[i]]);
+        const k = (py * canvas.width + px) * 4;
+        const got = Array.from(img.subarray(k, k + 4));
+        const ok = got[3] === 255 && [1, 3, 5].every((j, c) => Math.abs(parseInt(want.slice(j, j + 2), 16) - got[c]) <= 3);
+        if (ok) continue;
+        ++bad;
+        if (misses.length < 5) misses.push({ i, x: xCats[X[i]], fill: cats[F[i]], want, got });
+      }
+      return { rows: X.length, drawn: mark.stats.drawn, painter: mark.stats.painter, xType: xs.type, arrays: [X.constructor.name, F.constructor.name], bad, misses };
+    });
+    expect(r, JSON.stringify(r.misses)).toMatchObject({ rows: 601, drawn: 601, painter: 'gl', xType: 'point', arrays: ['Uint8Array', 'Uint16Array'], bad: 0 });
+    expect(errors).toEqual([]);
+  });
+
   test('wheel zoom re-renders and keeps dots aligned with the axes', async ({ page }) => {
     const errors = await openDemo(page);
     const before = await plotGeometry(page, 0, 0);

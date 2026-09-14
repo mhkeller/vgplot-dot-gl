@@ -35,13 +35,16 @@ function resolveCSS(str, context) {
 }
 
 /**
- * A 256-color palette (one row of a 256×1 texture) from the colors Plot gave the
- * category rows. Entry i is the color of category i. Unused entries stay
- * transparent, which also hides rows whose category is not in the color domain.
+ * A palette from the colors Plot gave the category rows, for up to 65,535
+ * categories. Entry i is the color of category i. It is laid out in rows of 256
+ * (row i / 256 of a 256×256 texture), and has as many rows as the categories
+ * need. Unused entries stay transparent, which also hides rows whose category is
+ * not in the color domain.
  */
 export function paletteFromValues(fillValues, count) {
-  const out = new Uint8Array(256 * 4);
-  const n = Math.min(count, 254, fillValues.length);
+  const n = Math.min(count, 65535, fillValues.length);
+  const rows = Math.max(1, Math.ceil(n / 256));
+  const out = new Uint8Array(256 * rows * 4);
   for (let i = 0; i < n; ++i) {
     const c = parse(fillValues[i])?.rgb();
     if (!c) continue;

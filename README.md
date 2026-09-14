@@ -32,21 +32,22 @@ Same as `vg.dot`:
 
 | option | what it takes |
 |---|---|
-| `x`, `y` | column names or SQL expressions (required) |
+| `x`, `y` | column names or SQL expressions (required). Number and date columns give a number or time axis. Text and boolean database columns give a category axis with one slot per value, sorted, with empty values in the last slot; up to 10,000 values, the same limit Plot has. An explicit domain or another mark that leaves out categories or spaces them unevenly is an error. Array data takes number and date columns only. |
 | `r` | a number, or a column (set `rDomain` / `rRange` on the plot as usual) |
-| `fill` | a color (`#hex`, a name, `var(--x)`, `currentColor`), or a column. Text, date and boolean columns get one color per value and a swatch legend. Number columns get a color ramp with 254 steps and a ramp legend. `colorDomain`, `colorRange`, `colorScheme` and `colorLegend` all apply. |
+| `fill` | a color (`#hex`, a name, `var(--x)`, `currentColor`), or a column. Text and boolean columns get one color per value and a swatch legend: up to 65,535 values from a database column, 254 from array data. Number and date columns get a color ramp with 254 steps and a ramp legend. `colorDomain`, `colorRange`, `colorScheme` and `colorLegend` all apply. |
 | `opacity`, `fillOpacity` | numbers, multiplied together. Overlapping dots add up the way see-through SVG circles do. |
 | `clip` | `true` keeps the dots inside the plot frame |
 
-Options only this mark has (they never reach the database):
+Options only this mark has. Mosaic and Plot never see them as channels; the mark adds `orderby` to its query itself.
 
 | option | default | meaning |
 |---|---|---|
 | `painter` | `'gl'` | `'gl'` draws with the graphics card, `'rect2d'` draws squares on a plain canvas, `'dot'` is the original SVG dots |
 | `fallback` | `'rect2d'` | what to use when the browser has no WebGL2 |
-| `sort` | `'-r'` | draw big dots first when `r` is a column; `null` keeps the row order |
+| `sort` | `'-r'` | draw big dots first when `r` is a column; `null` keeps the row order. Anything else is an error. |
+| `orderby` | `null` | what the query sorts rows by: a column name, `vg.column()`, `desc()` from `@uwdata/mosaic-sql`, or a `vg.sql` fragment such as ``vg.sql`${vg.column('price')} DESC` ``. Dots are drawn in row order, later rows on top, so with `sort: null` this sets which dots end up on top. |
 | `blit` | `'drawImage'` | how the picture is copied into the plot; `'bitmaprenderer'` is there for timing comparisons |
-| `maxCategories` | `254` | how many different fill values are allowed |
+| `maxCategories` | `65535` | how many different fill values a database column may have (65,535 at most; array data allows 254) |
 | `benchmark` | `false` | wait for the graphics card after each draw so `mark.stats` shows real times (slows everything; only for measuring) |
 | `fragmentBudget` | `4e7` | how much painting one frame may do before the mark draws at a lower resolution while you zoom, then repaints sharp 150 ms after you stop; `Infinity` turns this off |
 
@@ -73,12 +74,9 @@ nearest row, and put a ring on it using the SVG's `getScreenCTM()`. Three things
 
 ## Large data
 
-- Number columns come through as typed arrays only when they have no nulls, so filter nulls in SQL:
-  `WHERE x IS NOT NULL AND y IS NOT NULL`.
-- A text fill column never comes to the browser as text. The mark asks for the distinct values once per table, and the
-  data query returns small integers through a `CASE` expression. That also keeps the legend the same across filters. Array data and `painter: 'dot'` keep the plain column.
-- Plot picks a default dot size range from the 25th percentile of the `r` values. The mark passes an estimate of that
-  along so the default matches. If you set `rRange`, this doesn't matter.
+- Number and date columns come back from the database as doubles (dates as milliseconds, nulls as NaN). They arrive as typed arrays with no copying, including columns with nulls and `BIGINT` or `DECIMAL` columns.
+- Text and boolean columns on `x`, `y` and `fill` arrive as one- or two-byte integers. The mark asks for the distinct values once per table, and the data query returns each row's position in that list through a single `ENUM` lookup. The list comes from the whole table, so axes and legends stay the same across filters. The lists travel inside the query text, so very long text values can make the query too large to send; the mark then throws an error naming the column. Mosaic can combine the unfiltered queries of several plots on one table into one request, and their lists then add up. Array data and `painter: 'dot'` keep the plain columns.
+- Plot picks a default dot size range from the 25th percentile of the `r` values. The mark passes an estimate of that along so the default matches. If you set `rRange`, this doesn't matter.
 - All plots share one WebGL context, so a page with many plots stays far from the browser's limit. Call `mark.destroy()` when you throw a plot away; it frees the graphics memory too.
 
 ## Demo and tests
@@ -90,7 +88,7 @@ pnpm test:e2e          # browser tests: Chromium, Firefox and WebKit, plus Chrom
 pnpm test:e2e:update   # rewrite the screenshot baselines after a visual change you meant to make
 ```
 
-The browser suite (`tests/e2e/`) opens the demo with seeded data (`?rows=50000&seed=0.42`) and, in each browser, checks that all seven plots draw without errors, that dots land exactly where `vg.dot` puts its circles, that they stay lined up with the axes after zooming, that a brush filters the linked panel, that the hover ring lands on the dot under the mouse, that the mark recovers when the browser drops the WebGL context, and that a narrow page still lines up. Screenshot baselines sit next to the specs, one per browser, with the timing text masked out. `tests/e2e/perf.spec.js` loads 500k rows per plot and prints the timings and the name of the graphics driver. Headless browsers sometimes draw in software; treat those numbers as a worst case.
+The browser suite (`tests/e2e/`) opens the demo with seeded data (`?rows=50000&seed=0.42`) and, in each browser, checks that all seven plots draw without errors, that dots land exactly where `vg.dot` puts its circles and stay lined up with the axes after zooming, that a text axis and a text fill with 601 values put each dot at its category in its color, that a brush filters the linked panel, that the hover ring lands on the dot under the mouse, that the mark recovers when the browser drops the WebGL context, and that a narrow page still lines up. Screenshot baselines sit next to the specs, one per browser, with the timing text masked out. `tests/e2e/perf.spec.js` loads 500k rows per plot and prints the timings and the name of the graphics driver. Headless browsers sometimes draw in software; treat those numbers as a worst case.
 
 Results: the suite passes in Chromium, Firefox and WebKit (Safari's engine) on macOS at pixel ratio 2 and 1. Firefox and WebKit use the real graphics card even headless and zoom 500k rows at 44–48 fps, with the copy step under 2 ms. Headless Chromium draws in software, so only its pass/fail counts.
 

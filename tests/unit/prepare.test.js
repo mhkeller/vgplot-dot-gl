@@ -135,11 +135,25 @@ describe('prepare: review fixes', () => {
 
 describe('prepare: fill modes', () => {
   it('uses precomputed codes and rejects codes outside the category list', () => {
-    const p = prepare({ x: [1, 2, 3, 4], y: [1, 2, 3, 4], fillCodes: [0, 2, null, 7], cats: ['a', 'b', 'c'] });
+    const p = prepare({ x: [1, 2, 3, 4], y: [1, 2, 3, 4], fill: Uint8Array.from([0, 2, 255, 7]), fillCats: ['a', 'b', 'c'] });
     expect(Array.from(p.codes)).toEqual([0, 2, 255, 255]);
+    expect(p.hidden).toBe(255);
     expect(p.n).toBe(2);
     expect(p.cats).toEqual(['a', 'b', 'c']);
     expect(p.hints.fill).toEqual(['a', 'b', 'c']);
+  });
+
+  it('uses two-byte codes with 65535 as the hidden code above 254 fill categories', () => {
+    const fillCats = Array.from({ length: 300 }, (_, i) => `c${i}`);
+    const fill = Uint16Array.from([0, 299, 65535, 150, 12]);
+    const p = prepare({ x: [1, 2, 3, 4, NaN], y: [1, 2, 3, 4, 5], fill, fillCats });
+    expect(p.codes).toBeInstanceOf(Uint16Array);
+    expect(p.hidden).toBe(65535);
+    expect(Array.from(p.codes)).toEqual([0, 299, 65535, 150, 65535]);
+    expect(p.n).toBe(3);
+    expect(p.levels).toBe(300);
+    expect(p.k).toBe(300);
+    expect(p.hints.fill[299]).toBe('c299');
   });
 
   it('splits a number fill into 254 steps between its lowest and highest value', () => {
@@ -150,5 +164,53 @@ describe('prepare: fill modes', () => {
     expect(p.hints.fill.slice(0, 2)).toEqual([0, 100]);
     expect(p.levels).toBe(254);
     expect(p.continuous).toBe(true);
+    expect(p.codes).toBeInstanceOf(Uint8Array);
+    expect(p.hidden).toBe(255);
+  });
+
+  it('keeps Date legend hints for a date fill that arrives as epoch milliseconds', () => {
+    const fill = Float64Array.from([Date.UTC(2020, 0, 1), Date.UTC(2020, 6, 1), Date.UTC(2021, 0, 1)]);
+    const p = prepare({ x: [1, 2, 3], y: [1, 2, 3], fill, continuous: true, dates: { fill: true } });
+    expect(p.hints.fill[0]).toBeInstanceOf(Date);
+    expect(p.hints.fill.map(Number).slice(0, 2)).toEqual([Date.UTC(2020, 0, 1), Date.UTC(2021, 0, 1)]);
+    expect(Array.from(p.codes)).toEqual([0, 126, 253]);
+  });
+});
+
+describe('prepare: category axes and dates', () => {
+  it('gives a code axis its category list as hints and the code range as its extent', () => {
+    const x = Uint8Array.from([0, 2, 1, 255, 2]);
+    const y = Uint16Array.from([1, 0, 0, 1, 65535]);
+    const p = prepare({ x, y, xCats: ['a', 'b', null], yCats: ['no', 'yes'] });
+    expect(p.n).toBe(3);
+    expect(Array.from(p.perm)).toEqual([0, 1, 2]);
+    expect(p.extent.x).toEqual([0, 2]);
+    expect(p.extent.y).toEqual([0, 1]);
+    expect(p.k).toBe(3);
+    expect(p.hints.x).toEqual(['a', 'b', null]);
+    // Padded to k by repeating the last entry, so Plot sees the same list.
+    expect(p.hints.y).toEqual(['no', 'yes', 'yes']);
+    expect(p.xCats).toEqual(['a', 'b', null]);
+  });
+
+  it('makes k cover the longest category list and keeps null last in the padded hints', () => {
+    const xCats = Array.from({ length: 40 }, (_, i) => `x${i}`).concat([null]);
+    const p = prepare({ x: Uint8Array.from([40, 3]), y: [-1, 2], xCats, r: [1, 2], wantP25: true });
+    expect(p.k).toBe(41);
+    expect(p.hints.x.at(-1)).toBeNull();
+    expect(p.hints.x.slice(0, 41)).toEqual(xCats);
+    // A code axis has no log-scale slot; y still gets its smallest positive value first.
+    expect(p.hints.y[0]).toBe(2);
+    expect(p.hints.y[p.k - 1]).toBe(-1);
+  });
+
+  it('turns epoch-millisecond columns flagged as dates into Date hints', () => {
+    const x = Float64Array.from([Date.UTC(2020, 0, 1), NaN, Date.UTC(2024, 0, 1)]);
+    const p = prepare({ x, y: [1, 2, 3], dates: { x: true } });
+    expect(p.n).toBe(2);
+    expect(p.hints.x[0]).toBeInstanceOf(Date);
+    expect(+p.hints.x[1]).toBe(Date.UTC(2024, 0, 1));
+    expect(p.extent.x).toEqual([Date.UTC(2020, 0, 1), Date.UTC(2024, 0, 1)]);
+    expect(prepare({ x, y: [1, 2, 3] }).hints.x[0]).toBe(Date.UTC(2020, 0, 1));
   });
 });

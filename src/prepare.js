@@ -2,15 +2,19 @@
  * One pass over a query result. Works out everything the drawing needs that
  * doesn't depend on the plot's scales:
  *
- * - which rows can be drawn (x, y and radius are numbers, the category isn't null),
+ * - which rows can be drawn (x, y and radius are numbers or known category codes, the fill isn't missing),
  * - the lowest and highest values, which Plot uses to set up the scales,
- * - a small integer per row for the fill category,
+ * - a small integer per row for the fill color,
  * - the draw order (biggest dots first, like Plot's dot mark).
  *
  * The lowest and highest values come from every usable value in a column, not
  * only from drawable rows, because that is how Plot sets a scale from a column.
- * Columns arrive from mosaic as typed arrays when they can, and as plain arrays
- * when they have nulls or hold text or dates. Everything here takes both.
+ *
+ * Columns from the database arrive already turned into numbers: doubles with NaN
+ * for null, epoch milliseconds for dates (the `dates` flags say which), and
+ * category codes for text and boolean columns (the `*Cats` lists say which).
+ * Array data arrives as it was given, and dates are then Date objects. Everything
+ * here takes both.
  */
 
 /** Sort the same way Plot sorts a list of categories. */
@@ -35,24 +39,28 @@ export const CONTINUOUS_LEVELS = 254;
  * @param {ArrayLike<any>} input.x
  * @param {ArrayLike<any>} input.y
  * @param {ArrayLike<any>} [input.r]         radius column, or leave out for a fixed radius
- * @param {ArrayLike<any>} [input.fill]      category column (text), or with `continuous` a number column
- * @param {ArrayLike<any>} [input.fillCodes] category numbers already worked out in SQL (goes with `cats`)
- * @param {string[]} [input.cats]            the categories, sorted the way Plot sorts them, that `fillCodes` point into
+ * @param {ArrayLike<any>} [input.fill]      fill column: category codes with `fillCats`, numbers with `continuous`,
+ *                                           otherwise values that are grouped into categories here
+ * @param {any[]} [input.xCats]              x holds codes into this category list (sorted the way Plot sorts, null last)
+ * @param {any[]} [input.yCats]              y holds codes into this category list
+ * @param {any[]} [input.fillCats]           fill holds codes into this category list
  * @param {boolean} [input.continuous]       treat `fill` as numbers and split them into CONTINUOUS_LEVELS steps
+ * @param {{x?: boolean, y?: boolean, fill?: boolean}} [input.dates]
+ *                                           these columns hold epoch milliseconds that stand for dates
  * @param {'-r'|null} [input.sort]           draw order: '-r' draws big dots first
- * @param {number} [input.maxCategories]     most categories allowed (the codes have to fit in one byte)
+ * @param {number} [input.maxCategories]     most categories grouped here from plain values (254 at most, one byte)
  * @param {boolean} [input.wantP25]          also pass along the 25th percentile of the radii, so Plot's
  *                                           default dot size range comes out the same as with all rows
  */
-export function prepare({ x, y, r = null, fill = null, fillCodes = null, cats: givenCats = null, continuous = false, sort = '-r', maxCategories = 254, wantP25 = false }) {
+export function prepare({ x, y, r = null, fill = null, xCats = null, yCats = null, fillCats = null, continuous = false, dates = {}, sort = '-r', maxCategories = 254, wantP25 = false }) {
   const total = x.length;
   const valid = new Uint8Array(total);
-  const factorize = !!fill && !continuous;
+  const factorize = !!fill && !fillCats && !continuous;
   const temp = factorize ? new Uint16Array(total) : null;
   const seen = factorize ? new Map() : null;
   let fmin = Infinity, fmax = -Infinity;
-  const xDates = holdsDates(x);
-  const yDates = holdsDates(y);
+  const xDates = !!dates.x || holdsDates(x);
+  const yDates = !!dates.y || holdsDates(y);
   maxCategories = Math.min(254, maxCategories);
 
   let count = 0;
@@ -61,21 +69,30 @@ export function prepare({ x, y, r = null, fill = null, fillCodes = null, cats: g
   let rmin = Infinity, rmax = -Infinity;
 
   for (let i = 0; i < total; ++i) {
-    const xv = x[i];
-    const yv = y[i];
-    const xn = xv == null ? NaN : +xv;
-    const yn = yv == null ? NaN : +yv;
-    const xok = Number.isFinite(xn);
-    const yok = Number.isFinite(yn);
-    if (xok) {
-      if (xn < xmin) xmin = xn;
-      if (xn > xmax) xmax = xn;
-      if (xn > 0 && xn < xpos) xpos = xn;
+    let xok, yok;
+    if (xCats) {
+      xok = x[i] < xCats.length;
+    } else {
+      const xv = x[i];
+      const xn = xv == null ? NaN : +xv;
+      xok = Number.isFinite(xn);
+      if (xok) {
+        if (xn < xmin) xmin = xn;
+        if (xn > xmax) xmax = xn;
+        if (xn > 0 && xn < xpos) xpos = xn;
+      }
     }
-    if (yok) {
-      if (yn < ymin) ymin = yn;
-      if (yn > ymax) ymax = yn;
-      if (yn > 0 && yn < ypos) ypos = yn;
+    if (yCats) {
+      yok = y[i] < yCats.length;
+    } else {
+      const yv = y[i];
+      const yn = yv == null ? NaN : +yv;
+      yok = Number.isFinite(yn);
+      if (yok) {
+        if (yn < ymin) ymin = yn;
+        if (yn > ymax) ymax = yn;
+        if (yn > 0 && yn < ypos) ypos = yn;
+      }
     }
     let rok = true;
     if (r) {
@@ -88,9 +105,8 @@ export function prepare({ x, y, r = null, fill = null, fillCodes = null, cats: g
       }
     }
     if (!xok || !yok || !rok) continue;
-    if (fillCodes) {
-      const code = fillCodes[i];
-      if (code == null || !(code >= 0 && code < givenCats.length)) continue;
+    if (fillCats) {
+      if (!(fill[i] < fillCats.length)) continue;
     } else if (continuous) {
       const fv = fill[i];
       const fn = fv == null ? NaN : +fv;
@@ -116,10 +132,13 @@ export function prepare({ x, y, r = null, fill = null, fillCodes = null, cats: g
 
   // Each category gets a number in Plot's sorted order, so category number i is also the i-th hint row.
   // Number columns get a step number over their range instead.
-  const cats = givenCats ? givenCats : seen ? Array.from(seen.keys()).sort(ascending) : [];
-  const codes = new Uint8Array(total).fill(255);
-  if (fillCodes) {
-    for (let i = 0; i < total; ++i) if (valid[i]) codes[i] = fillCodes[i];
+  // Up to 254 colors fit one byte with 255 as the hidden code; more take two bytes with 65535 as the hidden code.
+  const cats = fillCats ? fillCats : seen ? Array.from(seen.keys()).sort(ascending) : [];
+  const levels = continuous ? CONTINUOUS_LEVELS : cats.length;
+  const hidden = levels > 254 ? 65535 : 255;
+  const codes = (hidden === 255 ? new Uint8Array(total) : new Uint16Array(total)).fill(hidden);
+  if (fillCats) {
+    for (let i = 0; i < total; ++i) if (valid[i]) codes[i] = fill[i];
   } else if (continuous) {
     const span = fmax - fmin;
     for (let i = 0; i < total; ++i) {
@@ -175,20 +194,24 @@ export function prepare({ x, y, r = null, fill = null, fillCodes = null, cats: g
   // it would from the full columns. For x and y the smallest positive value goes
   // first and the true minimum last: Plot's log scale looks at the first non-zero
   // value and then keeps only values with that sign, while a linear scale just
-  // takes the lowest and highest. For r, the spare hint slots all hold the
+  // takes the lowest and highest. A category axis gets its category list, so
+  // Plot builds a point scale with the same order, and row i of the hints sits
+  // where category i is drawn. For r, the spare hint slots all hold the
   // 25th-percentile radius, because Plot reads that value to pick its default
   // dot size range.
-  const needSlot = xmin <= 0 || ymin <= 0;
-  const k = Math.max(2, cats.length, wantP25 && r ? 8 : 0, needSlot ? 3 : 0);
+  const needSlot = (!xCats && xmin <= 0) || (!yCats && ymin <= 0);
+  const k = Math.max(2, cats.length, xCats?.length ?? 0, yCats?.length ?? 0, wantP25 && r ? 8 : 0, needSlot ? 3 : 0);
   const asDate = (flag, v) => (flag ? new Date(v) : v);
-  const position = (min, max, pos, dates) => {
+  const position = (min, max, pos, isDate) => {
     // No usable value at all: pass `undefined`, which Plot treats like an empty column.
     if (!Number.isFinite(min)) return new Array(k).fill(undefined);
-    const out = new Array(k).fill(asDate(dates, max));
-    out[0] = asDate(dates, pos < Infinity ? pos : min);
-    if (k > 2) out[k - 1] = asDate(dates, min);
+    const out = new Array(k).fill(asDate(isDate, max));
+    out[0] = asDate(isDate, pos < Infinity ? pos : min);
+    if (k > 2) out[k - 1] = asDate(isDate, min);
     return out;
   };
+  // The list padded to length k by repeating its last entry.
+  const padded = list => Array.from({ length: k }, (_, i) => list[Math.min(i, list.length - 1)]);
   const radius = () => {
     if (!Number.isFinite(rmin)) return new Array(k).fill(undefined);
     const out = new Array(k).fill(wantP25 ? p25 : rmax);
@@ -196,14 +219,13 @@ export function prepare({ x, y, r = null, fill = null, fillCodes = null, cats: g
     out[1] = rmax;
     return out;
   };
-  const hasFill = !!(fill || fillCodes);
   const hints = {
-    x: position(xmin, xmax, xpos, xDates),
-    y: position(ymin, ymax, ypos, yDates),
+    x: xCats ? padded(xCats) : position(xmin, xmax, xpos, xDates),
+    y: yCats ? padded(yCats) : position(ymin, ymax, ypos, yDates),
     r: r ? radius() : null,
-    fill: !hasFill ? null
-      : continuous ? position(fmin, fmax, Infinity, false)
-      : Array.from({ length: k }, (_, i) => cats[Math.min(i, cats.length - 1)])
+    fill: !fill ? null
+      : continuous ? position(fmin, fmax, Infinity, !!dates.fill)
+      : padded(cats)
   };
 
   return {
@@ -211,12 +233,23 @@ export function prepare({ x, y, r = null, fill = null, fillCodes = null, cats: g
     total,
     perm,
     codes,
+    hidden,
     cats,
+    xCats,
+    yCats,
     continuous,
-    levels: continuous ? CONTINUOUS_LEVELS : cats.length,
+    dates: { x: xDates, y: yDates, fill: !!dates.fill },
+    levels,
     hints,
     k,
     p25,
-    extent: { x: [xmin, xmax], y: [ymin, ymax], r: r ? [rmin, rmax] : null, fill: continuous ? [fmin, fmax] : null, xpos, ypos }
+    extent: {
+      x: xCats ? [0, xCats.length - 1] : [xmin, xmax],
+      y: yCats ? [0, yCats.length - 1] : [ymin, ymax],
+      r: r ? [rmin, rmax] : null,
+      fill: continuous ? [fmin, fmax] : null,
+      xpos,
+      ypos
+    }
   };
 }

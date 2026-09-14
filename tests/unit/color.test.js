@@ -15,6 +15,14 @@ describe('color', () => {
     expect(Array.from(p.subarray(0, 12))).toEqual([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 128]);
     expect(p[12 + 3]).toBe(0);
   });
+
+  it('lays out more than 256 colors in rows of 256', () => {
+    const colors = Array.from({ length: 300 }, (_, i) => (i === 299 ? '#0000ff' : 'red'));
+    const p = paletteFromValues(colors, 300);
+    expect(p.length).toBe(256 * 2 * 4);
+    expect(Array.from(p.subarray(299 * 4, 300 * 4))).toEqual([0, 0, 255, 255]);
+    expect(p[300 * 4 + 3]).toBe(0);
+  });
 });
 
 describe('color: browser-resolved strings', () => {

@@ -1,8 +1,10 @@
 import { getSharedGL } from '../shared-gl.js';
-import { transformFor, affine } from '../scale-map.js';
-import { parseColor } from '../color.js';
+import { transformFor, affine, axisAffine } from '../scale-map.js';
 
 const SCRATCH = new Uint8Array(4);
+
+/** The lowest pixel ratio a lower-resolution frame may use while you zoom. */
+const MIN_REDUCED_DPR = 1;
 
 /**
  * The WebGL painter. The point data is sent to the graphics card once per query
@@ -46,14 +48,15 @@ const FLOAT32_EPS = 6e-8;
  * Which center to subtract before sending data up. Normally the middle of the
  * data range. When you have zoomed in so far that 32-bit rounding of the centered
  * values would move dots by a visible fraction of a pixel, the middle of what is
- * on screen is used instead. That costs one more upload.
+ * on screen is used instead. That costs one more upload. A category axis always
+ * uses the middle of its codes, which are small integers that 32-bit floats hold exactly.
  */
 function centersFor(mark, sx, sy) {
   const { prep, gpu } = mark;
   const tx = transformFor(sx, 'x');
   const ty = transformFor(sy, 'y');
-  let cx = gpu ? gpu.cx : center(tx, prep.extent.x);
-  let cy = gpu ? gpu.cy : center(ty, prep.extent.y);
+  let cx = gpu && !prep.xCats ? gpu.cx : center(tx, prep.extent.x);
+  let cy = gpu && !prep.yCats ? gpu.cy : center(ty, prep.extent.y);
   if (gpu) {
     const drift = (T, s, c) => {
       const mid = (T(+s.domain[0]) + T(+s.domain[1])) / 2;
@@ -61,8 +64,8 @@ function centersFor(mark, sx, sy) {
       const { a } = affine(s, 0, 0);
       return Math.abs(mid - c) * FLOAT32_EPS * Math.abs(a) > MAX_DRIFT_PX ? mid : null;
     };
-    const nx = drift(tx, sx, cx);
-    const ny = drift(ty, sy, cy);
+    const nx = prep.xCats ? null : drift(tx, sx, cx);
+    const ny = prep.yCats ? null : drift(ty, sy, cy);
     if (nx != null) cx = nx;
     if (ny != null) cy = ny;
   }
@@ -90,11 +93,11 @@ function upload(mark, shared, sx, sy, sr) {
   const ty = transformFor(sy, 'y');
   const tr = R ? transformFor(sr, 'r') : null;
 
-  const { n, perm, codes } = prep;
+  const { n, perm, codes, hidden } = prep;
   const fx = new Float32Array(n);
   const fy = new Float32Array(n);
   const fr = R ? new Float32Array(n) : null;
-  const cat = new Uint8Array(n);
+  const cat = new codes.constructor(n);
   let sumR = 0;
   for (let i = 0; i < n; ++i) {
     const j = perm[i];
@@ -109,13 +112,13 @@ function upload(mark, shared, sx, sy, sr) {
     }
     fx[i] = ok ? vx : 0;
     fy[i] = ok ? vy : 0;
-    cat[i] = ok ? codes[j] : 255;
+    cat[i] = ok ? codes[j] : hidden;
   }
 
   const vao = gl.createVertexArray();
   gl.bindVertexArray(vao);
   shared.bindQuad();
-  const buffers = [shared.attrib(1, fx), shared.attrib(2, fy), shared.attrib(4, cat, gl.UNSIGNED_BYTE)];
+  const buffers = [shared.attrib(1, fx), shared.attrib(2, fy), shared.attrib(4, cat, cat instanceof Uint16Array ? gl.UNSIGNED_SHORT : gl.UNSIGNED_BYTE)];
   if (fr) buffers.push(shared.attrib(3, fr));
   else {
     gl.disableVertexAttribArray(3);
@@ -148,7 +151,7 @@ function estimateFragments(gpu, sr, style, dpr) {
  *   estimated painting work is over the mark's budget (the mark then schedules
  *   a sharp repaint once zooming stops)
  */
-export function paintGL(mark, canvas, { sx, sy, sr, frame, style }, { allowReduce = false } = {}) {
+export function paintGL(mark, canvas, { sx, sy, sr, lines, frame, style }, { allowReduce = false } = {}) {
   const shared = getSharedGL(mark.blit);
   if (shared.lost) {
     shared.refs.add(mark); // so the plot is redrawn too when the context comes back
@@ -162,7 +165,7 @@ export function paintGL(mark, canvas, { sx, sy, sr, frame, style }, { allowReduc
   let { pw, ph, dpr } = frame;
   const estimate = estimateFragments(gpu, sr, style, dpr);
   if (allowReduce && estimate > mark.fragmentBudget) {
-    dpr = Math.max(1, dpr * Math.sqrt(mark.fragmentBudget / estimate));
+    dpr = Math.max(MIN_REDUCED_DPR, dpr * Math.sqrt(mark.fragmentBudget / estimate));
     pw = Math.max(1, Math.round(fw * dpr));
     ph = Math.max(1, Math.round(fh * dpr));
   }
@@ -171,8 +174,8 @@ export function paintGL(mark, canvas, { sx, sy, sr, frame, style }, { allowReduc
     canvas.height = ph;
   }
 
-  const ax = affine(sx, gpu.cx, -fx, 'x');
-  const ay = affine(sy, gpu.cy, -fy, 'y');
+  const ax = axisAffine(sx, lines.x, gpu.cx, -fx, 'x');
+  const ay = axisAffine(sy, lines.y, gpu.cy, -fy, 'y');
   shared.beginPlot(pw, ph);
   gl.bindVertexArray(gpu.vao);
   gl.uniform2f(u.ax, ax.a, ax.b);
@@ -181,6 +184,7 @@ export function paintGL(mark, canvas, { sx, sy, sr, frame, style }, { allowReduc
   gl.uniform1f(u.dpr, dpr);
   gl.uniform1f(u.offset, offset);
   gl.uniform1f(u.opacity, style.opacity);
+  gl.uniform1f(u.hidden, gpu.prep.hidden);
   if (gpu.hasR) {
     const ar = affine(sr, 0, 0, 'r');
     gl.uniform4f(u.r, 1, ar.a, ar.b, 0);
@@ -188,7 +192,7 @@ export function paintGL(mark, canvas, { sx, sy, sr, frame, style }, { allowReduc
     gl.uniform4f(u.r, 0, 0, 0, style.r);
   }
   if (style.palette) {
-    shared.setPalette(style.palette);
+    shared.setPalette(style.palette, style.palette.length / (256 * 4));
     gl.uniform1i(u.colorMode, 1);
   } else {
     gl.uniform1i(u.colorMode, 0);

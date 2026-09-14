@@ -52,13 +52,13 @@ export function selfParity(page, panelIndex, samples = 600) {
     const cols = mark.data.columns;
     const X = cols[mark.channelField('x', { exact: true }).as];
     const Y = cols[mark.channelField('y', { exact: true }).as];
-    const codes = mark.prep.codes;
+    const { codes, hidden } = mark.prep;
     const step = Math.max(1, Math.floor(X.length / samples));
     let tested = 0;
     let hit = 0;
     const misses = [];
     for (let i = 0; i < X.length && tested < samples; i += step) {
-      if (codes[i] === 255) continue;
+      if (codes[i] === hidden) continue;
       const cx = xs.apply(X[i]);
       const cy = ys.apply(Y[i]);
       if (!Number.isFinite(cx) || !Number.isFinite(cy)) continue;

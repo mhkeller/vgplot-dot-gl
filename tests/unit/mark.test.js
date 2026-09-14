@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from 'vitest';
-import { createRequire } from 'node:module';
+import { describe, it, expect, vi } from 'vitest';
 import * as Plot from '@observablehq/plot';
+import { color } from 'd3-color';
+import { Param } from '@uwdata/mosaic-core';
+import { avg, column, count, desc, max, sql } from '@uwdata/mosaic-sql';
 import { DotGLMark } from '../../src/DotGLMark.js';
-
-const require = createRequire(import.meta.url);
 
 function table(n) {
   let s = 7;
@@ -25,13 +25,45 @@ function stubbed(mark) {
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
+/**
+ * A coordinator that answers the two kinds of query prepare() sends: Mosaic's DESC of a
+ * column (from `types`, keyed by the column's SQL) and the mark's DISTINCT (from `distinct`,
+ * keyed by column name). Every query it sees is kept in `sql`.
+ */
+function stubCoordinator(types, distinct = {}) {
+  const seen = [];
+  return {
+    sql: seen,
+    async query(q) {
+      const text = String(q);
+      seen.push(text);
+      const described = text.match(/^DESC SELECT (.+?) AS "column"/);
+      if (described) return [{ column_name: 'column', column_type: types[described[1]], null: 'YES' }];
+      const listed = text.match(/^SELECT DISTINCT \("(.+?)"\)::VARCHAR AS "v"/);
+      if (listed) return (distinct[listed[1]] ?? []).map(v => ({ v }));
+      throw new Error(`unexpected query: ${text}`);
+    }
+  };
+}
+
+/** A database-backed mark after prepare(), with a stub coordinator. */
+async function prepared(options, types, distinct) {
+  const mark = new DotGLMark({ table: 'trades' }, { painter: 'rect2d', ...options });
+  mark.coordinator = stubCoordinator(types, distinct);
+  await mark.prepare();
+  return mark;
+}
+
+const distinctSQL = mark => mark.coordinator.sql.filter(s => s.includes('DISTINCT'));
+
 describe('DotGLMark', () => {
   const data = table(3000);
 
   it('separates its own options from the channels sent to SQL/Plot', () => {
-    const mark = new DotGLMark(data, { x: 'size', y: 'price', fill: 'party', r: 2.5, opacity: 0.6, clip: true, sort: null, blit: 'bitmaprenderer', painter: 'rect2d' });
+    const mark = new DotGLMark(data, { x: 'size', y: 'price', fill: 'party', r: 2.5, opacity: 0.6, clip: true, sort: null, orderby: 'volume', blit: 'bitmaprenderer', painter: 'rect2d' });
     expect(mark.channels.map(c => c.channel).sort()).toEqual(['clip', 'fill', 'opacity', 'r', 'x', 'y']);
     expect(mark.sortMode).toBeNull();
+    expect(mark.orderby).toBe('volume');
     expect(mark.blit).toBe('bitmaprenderer');
     expect(mark.constant('opacity')).toBe(0.6);
   });
@@ -196,27 +228,15 @@ describe('DotGLMark: more review fixes', () => {
 
 
 describe('DotGLMark: fill modes', () => {
-  it('replaces the fill column with a CASE expression when categories were resolved in SQL', () => {
-    const mark = new DotGLMark({ table: 'trades' }, { x: 'size', y: 'price', fill: 'party', painter: 'rect2d' });
-    // What prepare() would have produced for the categories ['D', 'R'].
-    mark.cats = ['D', 'R'];
-    mark.fillMode = 'codes';
-    const { cond, eq, literal } = require('@uwdata/mosaic-sql');
-    mark.codeExpr = cond().when(eq(mark.channelField('fill').field, literal('D')), 0).when(eq(mark.channelField('fill').field, literal('R')), 1);
-    const sql = String(mark.query());
-    expect(sql).toMatch(/CASE WHEN \("party" = 'D'\) THEN 0 WHEN \("party" = 'R'\) THEN 1 END AS "party"/);
-    expect(sql).toMatch(/"size"/);
-  });
-
   it('draws integer codes from SQL against the category list', () => {
     const rows = [
       { size: 1, price: 1, party: 1 },
       { size: 2, price: 2, party: 0 },
-      { size: 3, price: 3, party: null }
+      { size: 3, price: 3, party: 255 }
     ];
     const mark = stubbed(new DotGLMark(rows, { x: 'size', y: 'price', fill: 'party', painter: 'rect2d' }));
-    mark.cats = ['D', 'R'];
-    mark.fillMode = 'codes';
+    // What prepare() would have produced for the categories ['D', 'R'].
+    mark.categories.set('party', { cats: ['D', 'R'] });
     const [{ data: d, options }] = mark.plotSpecs();
     expect(options.fill).toEqual({ value: ['D', 'R'], scale: 'color' });
     expect(Array.from(mark.prep.codes)).toEqual([1, 0, 255]);
@@ -227,7 +247,8 @@ describe('DotGLMark: fill modes', () => {
   it('bins a numeric fill and lets Plot build a continuous color scale with a ramp legend', () => {
     const rows = Array.from({ length: 300 }, (_, i) => ({ size: i + 1, price: i, shift: (i / 299) * 2 - 1 }));
     const mark = stubbed(new DotGLMark(rows, { x: 'size', y: 'price', fill: 'shift', painter: 'rect2d' }));
-    mark.fillMode = 'continuous';
+    // What prepare() reads from Mosaic's field info.
+    mark.channelField('fill').type = 'number';
     const [{ data: d, options }] = mark.plotSpecs();
     expect(options.fill.value.slice(0, 2)).toEqual([-1, 1]);
     expect(mark.prep.continuous).toBe(true);
@@ -240,11 +261,263 @@ describe('DotGLMark: fill modes', () => {
     // (The ramp legend needs a 2D canvas, which jsdom doesn't have; the browser suite checks it.)
   });
 
-  it('keeps the string path for array data and for the SVG painter', async () => {
+  it('groups plain values into categories for array data', async () => {
     const mark = new DotGLMark(table(10), { x: 'size', y: 'price', fill: 'party', painter: 'rect2d' });
-    expect(mark.fillMode).toBe('strings');
     await mark.prepare();
-    expect(mark.fillMode).toBe('strings');
-    expect(mark.codeExpr).toBeNull();
+    expect(mark.categories.size).toBe(0);
+    mark.plotSpecs();
+    expect(mark.prep.cats).toEqual(['D', 'I', 'R']);
+  });
+});
+
+describe('DotGLMark: orderby and sort', () => {
+  it('adds orderby to the query without making it a channel', () => {
+    const byColumn = new DotGLMark({ table: 'trades' }, { x: 'size', y: 'price', orderby: 'volume', painter: 'rect2d' });
+    expect(byColumn.channels.map(c => c.channel)).not.toContain('orderby');
+    expect(String(byColumn.query())).toBe('SELECT "size", "price" FROM "trades" AS "source" ORDER BY "volume"');
+    const byFragment = new DotGLMark({ table: 'trades' }, { x: 'size', y: 'price', orderby: sql`${column('volume')} DESC`, painter: 'rect2d' });
+    expect(String(byFragment.query())).toMatch(/ ORDER BY "volume" DESC$/);
+    const byDesc = new DotGLMark({ table: 'trades' }, { x: 'size', y: 'price', orderby: desc('volume'), painter: 'rect2d' });
+    expect(String(byDesc.query())).toMatch(/ ORDER BY "volume" DESC$/);
+  });
+
+  it("accepts sort '-r' or null and throws for anything else", () => {
+    const rows = table(10);
+    expect(() => new DotGLMark(rows, { x: 'size', y: 'price', sort: '-r' })).not.toThrow();
+    expect(() => new DotGLMark(rows, { x: 'size', y: 'price', sort: null })).not.toThrow();
+    expect(() => new DotGLMark(rows, { x: 'size', y: 'price', sort: Param.value('-r') })).toThrow(/sort must be '-r' or null/);
+    expect(() => new DotGLMark(rows, { x: 'size', y: 'price', sort: { channel: 'x', order: 'descending' } })).toThrow(/use orderby/);
+  });
+});
+
+describe('DotGLMark: categories', () => {
+  const types = { '"party"': 'VARCHAR', '"price"': 'DOUBLE', '"size"': 'DOUBLE' };
+
+  it('turns a text x into codes with one ENUM lookup, and gives null the last code', async () => {
+    const mark = await prepared({ x: 'party', y: 'price' }, types, { party: ['R', null, 'D', "O'Neil"] });
+    expect(distinctSQL(mark)).toEqual(['SELECT DISTINCT ("party")::VARCHAR AS "v" FROM "trades" LIMIT 10001']);
+    expect(mark.categories.get('party').cats).toEqual(['D', "O'Neil", 'R', null]);
+    expect(String(mark.query())).toBe(
+      `SELECT CAST(CASE WHEN "party" IS NULL THEN 3 ELSE COALESCE(enum_code(TRY_CAST(CAST("party" AS VARCHAR) AS ENUM('D', 'O''Neil', 'R'))), 255) END AS UTINYINT) AS "party", ` +
+      `coalesce(("price")::DOUBLE, 'NaN'::DOUBLE) AS "price" FROM "trades" AS "source"`
+    );
+  });
+
+  it('uses two-byte codes above 254 categories, and the hidden code for null when there is no null category', async () => {
+    const values = Array.from({ length: 300 }, (_, i) => `c${String(i).padStart(3, '0')}`);
+    const mark = await prepared({ x: 'size', y: 'price', fill: 'party' }, types, { party: values });
+    expect(distinctSQL(mark)).toEqual(['SELECT DISTINCT ("party")::VARCHAR AS "v" FROM "trades" LIMIT 65536']);
+    const query = String(mark.query());
+    expect(query).toMatch(/^SELECT coalesce\(\("size"\)::DOUBLE, 'NaN'::DOUBLE\) AS "size", /);
+    expect(query).toMatch(/CAST\(CASE WHEN "party" IS NULL THEN 65535 ELSE COALESCE\(enum_code\(TRY_CAST\(CAST\("party" AS VARCHAR\) AS ENUM\('c000', 'c001', /);
+    expect(query).toMatch(/'c299'\)\)\), 65535\) END AS USMALLINT\) AS "party"/);
+  });
+
+  it('sends a column with no values besides null without an ENUM', async () => {
+    const mark = await prepared({ x: 'party', y: 'price' }, types, { party: [null] });
+    expect(String(mark.query())).toMatch(/^SELECT CAST\(CASE WHEN "party" IS NULL THEN 0 ELSE 255 END AS UTINYINT\) AS "party"/);
+  });
+
+  it('throws when a column has more distinct values than its limit', async () => {
+    const many = n => Array.from({ length: n }, (_, i) => `v${i}`);
+    await expect(prepared({ x: 'party', y: 'price' }, types, { party: many(10001) }))
+      .rejects.toThrow('dotGL: the x column "party" has more than 10000 distinct values');
+    await expect(prepared({ x: 'size', y: 'price', fill: 'party', maxCategories: 3 }, types, { party: many(4) }))
+      .rejects.toThrow('dotGL: the fill column "party" has more than 3 distinct values');
+    await expect(prepared({ x: 'size', y: 'price', fill: 'party' }, types, { party: many(65536) }))
+      .rejects.toThrow('dotGL: the fill column "party" has more than 65535 distinct values');
+  });
+
+  it('throws when the category lists would make the request too large to send', async () => {
+    const values = Array.from({ length: 65000 }, (_, i) => 'v'.repeat(50) + String(i).padStart(5, '0'));
+    await expect(prepared({ x: 'size', y: 'price', fill: 'party' }, types, { party: values }))
+      .rejects.toThrow(/^dotGL: the categories of "party" are too large to send \(3\.\d MB\)$/);
+  });
+
+  it('draws BOOLEAN and UUID columns as categories the same way', async () => {
+    const mark = await prepared(
+      { x: 'size', y: 'flag', fill: 'id' },
+      { ...types, '"flag"': 'BOOLEAN', '"id"': 'UUID' },
+      { flag: ['true', null, 'false'], id: ['6b1e5f3e-0000-4000-8000-000000000002', '6b1e5f3e-0000-4000-8000-000000000001'] }
+    );
+    expect(distinctSQL(mark)).toEqual([
+      'SELECT DISTINCT ("flag")::VARCHAR AS "v" FROM "trades" LIMIT 10001',
+      'SELECT DISTINCT ("id")::VARCHAR AS "v" FROM "trades" LIMIT 65536'
+    ]);
+    const query = String(mark.query());
+    expect(query).toContain(`CAST(CASE WHEN "flag" IS NULL THEN 2 ELSE COALESCE(enum_code(TRY_CAST(CAST("flag" AS VARCHAR) AS ENUM('false', 'true'))), 255) END AS UTINYINT) AS "flag"`);
+    expect(query).toContain(`TRY_CAST(CAST("id" AS VARCHAR) AS ENUM('6b1e5f3e-0000-4000-8000-000000000001', '6b1e5f3e-0000-4000-8000-000000000002'))`);
+  });
+
+  it('gives x and fill on the same column one list and one code column', async () => {
+    const mark = await prepared({ x: 'party', y: 'price', fill: 'party' }, types, { party: ['R', 'D'] });
+    expect(distinctSQL(mark)).toEqual(['SELECT DISTINCT ("party")::VARCHAR AS "v" FROM "trades" LIMIT 10001']);
+    expect(mark.categories.size).toBe(1);
+    expect(String(mark.query()).match(/AS "party"/g)).toHaveLength(1);
+    const limited = await prepared({ x: 'party', y: 'price', fill: 'party', maxCategories: 50 }, types, { party: ['R', 'D'] });
+    expect(distinctSQL(limited)).toEqual(['SELECT DISTINCT ("party")::VARCHAR AS "v" FROM "trades" LIMIT 51']);
+  });
+
+  it('keeps an aggregate x numeric and groups by the category column', async () => {
+    const mark = await prepared(
+      { x: avg('price'), y: count(), fill: 'party' },
+      { ...types, 'avg("price")': 'DOUBLE', 'count(*)': 'BIGINT' },
+      { party: ['R', 'D'] }
+    );
+    expect(distinctSQL(mark)).toHaveLength(1);
+    const query = String(mark.query());
+    expect(query).toMatch(/^SELECT coalesce\(\(avg\("price"\)\)::DOUBLE, 'NaN'::DOUBLE\) AS "x", coalesce\(\(count\(\*\)\)::DOUBLE, 'NaN'::DOUBLE\) AS "y", CAST\(CASE WHEN "party"/);
+    expect(query).toMatch(/ GROUP BY "party"$/);
+  });
+
+  it('throws for a text expression and for column types it cannot draw', async () => {
+    await expect(prepared({ x: max('party'), y: count() }, { 'max("party")': 'VARCHAR', 'count(*)': 'BIGINT' }))
+      .rejects.toThrow('dotGL: x must be a plain column to be drawn as categories');
+    await expect(prepared({ x: 'tags', y: 'price' }, { ...types, '"tags"': 'VARCHAR[]' }))
+      .rejects.toThrow(`dotGL: the x column "tags" has type VARCHAR[], which can't be drawn`);
+    await expect(prepared({ x: 'size', y: 'price', fill: 'meta' }, { ...types, '"meta"': 'STRUCT(a INTEGER)' }))
+      .rejects.toThrow(`dotGL: the fill column "meta" has type STRUCT(a INTEGER), which can't be drawn`);
+  });
+
+  it('reads a result that lands during a second prepare() with the lists its codes point into', async () => {
+    const mark = await prepared({ x: 'party', y: 'price' }, types, { party: ['R', 'D'] });
+    const again = mark.prepare();
+    mark.queryResult([{ party: 1, price: 1 }, { party: 0, price: 2 }]);
+    expect(mark.plotSpecs()[0].options.x).toEqual(['D', 'R']);
+    await again;
+  });
+
+  it("fetches no categories when a 'gl' mark falls back to SVG dots", async () => {
+    const noWebGL = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+    try {
+      const mark = await prepared({ x: 'size', y: 'price', fill: sql`upper(party)`, painter: 'gl', fallback: 'dot' }, { ...types, 'upper(party)': 'VARCHAR' });
+      expect(mark.activePainter()).toBe('dot');
+      expect(distinctSQL(mark)).toEqual([]);
+    } finally {
+      noWebGL.mockRestore();
+    }
+  });
+
+  it('gives Plot the category list, so it builds the same point scale as the text column', async () => {
+    const mark = stubbed(await prepared({ x: 'party', y: 'price' }, types, { party: ['R', null, 'D', 'I'] }));
+    const text = ['R', null, 'D', 'I', 'R'];
+    mark.data = { numRows: 5, columns: { party: Uint8Array.from([2, 3, 0, 1, 2]), price: Float64Array.from([1, 2, 3, 4, 5]) } };
+    const [{ data: d, options }] = mark.plotSpecs();
+    expect(mark.prep.extent.x).toEqual([0, 3]);
+    const hinted = Plot.plot({ document, width: 640, height: 400, marks: [Plot.dot(d, options)] });
+    const full = Plot.plot({ document, width: 640, height: 400, marks: [Plot.dot({ length: 5 }, { x: text, y: [1, 2, 3, 4, 5] })] });
+    expect(hinted.scale('x').type).toBe('point');
+    expect(hinted.scale('x').domain).toEqual(full.scale('x').domain);
+    expect(hinted.scale('x').domain).toEqual(['D', 'I', 'R', null]);
+  });
+});
+
+describe('DotGLMark: drawing', () => {
+  it("draws a text x with a null and a 300-value fill where Plot's own dots go, in their colors", async () => {
+    const letters = ['a', 'b', 'c', 'd', null];
+    const names = Array.from({ length: 300 }, (_, i) => `f${String(i).padStart(3, '0')}`);
+    const n = 600;
+    const X = Array.from({ length: n }, (_, i) => letters[i % 5]);
+    const Y = Array.from({ length: n }, (_, i) => (i * 37) % 101);
+    const F = Array.from({ length: n }, (_, i) => names[(i * 7) % 300]);
+    const mark = await prepared(
+      { x: 'letter', y: 'price', fill: 'name' },
+      { '"letter"': 'VARCHAR', '"price"': 'DOUBLE', '"name"': 'VARCHAR' },
+      { letter: letters, name: names }
+    );
+    const xCats = mark.categories.get('letter').cats;
+    const fillCats = mark.categories.get('name').cats;
+    mark.data = {
+      numRows: n,
+      columns: { letter: Uint8Array.from(X, v => xCats.indexOf(v)), price: Float64Array.from(Y), name: Uint16Array.from(F, v => fillCats.indexOf(v)) }
+    };
+
+    // jsdom has no 2D canvas, so record the squares the rect2d painter fills.
+    const squares = [];
+    const ctx = { setTransform() {}, clearRect() {}, fillRect(x, y, w, h) { squares.push({ x: x + w / 2, y: y + h / 2, fill: this.fillStyle }); } };
+    const canvas2d = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx);
+    try {
+      const [{ data: d, options }] = mark.plotSpecs();
+      Plot.plot({ document, width: 640, height: 400, marks: [Plot.dot(d, options)] });
+    } finally {
+      canvas2d.mockRestore();
+    }
+    expect(mark.prep.codes).toBeInstanceOf(Uint16Array);
+
+    const full = Plot.plot({ document, width: 640, height: 400, marks: [Plot.dot({ length: n }, { x: X, y: Y, fill: { value: F, scale: 'color' } })] });
+    const circles = [...full.querySelectorAll('circle')];
+    const [, tx, ty] = circles[0].parentNode.getAttribute('transform').match(/translate\(([\d.]+),([\d.]+)\)/).map(Number);
+    expect(squares).toHaveLength(n);
+    expect(circles).toHaveLength(n);
+    circles.forEach((c, i) => {
+      expect(squares[i].x).toBeCloseTo(+c.getAttribute('cx') + tx, 6);
+      expect(squares[i].y).toBeCloseTo(+c.getAttribute('cy') + ty, 6);
+      expect(color(squares[i].fill).formatHex()).toBe(color(c.getAttribute('fill')).formatHex());
+    });
+  });
+
+  it('throws when a number column sits on a point or band scale', () => {
+    const rows = [{ year: 2000, price: 1 }, { year: 2005, price: 2 }];
+    for (const type of ['point', 'band']) {
+      const mark = new DotGLMark(rows, { x: 'year', y: 'price', painter: 'rect2d' });
+      const [{ data: d, options }] = mark.plotSpecs();
+      expect(() => Plot.plot({ document, x: { type }, marks: [Plot.dot(d, options)] }))
+        .toThrow(`dotGL: the x scale type "${type}" is not supported for a number or date column`);
+    }
+  });
+});
+
+describe('DotGLMark: number and date columns', () => {
+  const types = { '"size"': 'BIGINT', '"day"': 'DATE', '"volume"': 'DECIMAL(10,2)', '"party"': 'VARCHAR' };
+
+  it('casts numbers to DOUBLE and dates to epoch milliseconds, with NaN for null', async () => {
+    const mark = await prepared({ x: 'size', y: 'day', r: 'volume' }, types);
+    expect(String(mark.query())).toBe(
+      `SELECT coalesce(("size")::DOUBLE, 'NaN'::DOUBLE) AS "size", coalesce((epoch_ms("day"))::DOUBLE, 'NaN'::DOUBLE) AS "day", ` +
+      `coalesce(("volume")::DOUBLE, 'NaN'::DOUBLE) AS "volume" FROM "trades" AS "source"`
+    );
+  });
+
+  it('leaves unnested columns as Mosaic selects them', async () => {
+    const mark = new DotGLMark({ table: 'trades', options: { unnest: 'sizes' } }, { x: 'sizes', y: 'volume', painter: 'rect2d' });
+    mark.coordinator = stubCoordinator({ ...types, '"sizes"': 'DOUBLE[]' });
+    await mark.prepare();
+    expect(String(mark.query())).toBe(`SELECT UNNEST("sizes") AS "sizes", coalesce(("volume")::DOUBLE, 'NaN'::DOUBLE) AS "volume" FROM "trades" AS "source"`);
+  });
+
+  it("rewrites nothing and fetches no categories with painter: 'dot'", async () => {
+    const mark = await prepared({ x: 'size', y: 'day', fill: 'party', painter: 'dot' }, types, { party: ['D'] });
+    expect(distinctSQL(mark)).toEqual([]);
+    expect(String(mark.query())).toBe('SELECT "size", "day", "party" FROM "trades" AS "source"');
+  });
+
+  it('turns epoch-millisecond date columns back into Date hints, and a date fill into a time color scale', async () => {
+    const mark = stubbed(await prepared({ x: 'size', y: 'day', fill: 'day' }, types));
+    const days = Float64Array.from([Date.UTC(2020, 0, 1), NaN, Date.UTC(2021, 0, 1)]);
+    mark.data = { numRows: 3, columns: { size: Float64Array.from([1, 2, 3]), day: days } };
+    const [{ data: d, options }] = mark.plotSpecs();
+    expect(mark.prep.continuous).toBe(true);
+    expect(mark.prep.n).toBe(2);
+    expect(options.y[0]).toBeInstanceOf(Date);
+    expect(options.fill.value[0]).toBeInstanceOf(Date);
+    const fig = Plot.plot({ document, width: 640, height: 400, marks: [Plot.dot(d, options)] });
+    expect(fig.scale('y').type).toBe('utc');
+    expect(fig.scale('color').type).toBe('utc');
+    expect(fig.scale('color').domain.map(Number)).toEqual([Date.UTC(2020, 0, 1), Date.UTC(2021, 0, 1)]);
+  });
+});
+
+describe('DotGLMark: queryResult', () => {
+  it('keeps the prepared rows when Mosaic hands back the same result, and clears them for a new one', () => {
+    const mark = stubbed(new DotGLMark({ table: 'trades' }, { x: 'size', y: 'price', painter: 'rect2d' }));
+    const result = [{ size: 1, price: 2 }, { size: 3, price: 4 }];
+    mark.queryResult(result);
+    mark.plotSpecs();
+    const prep = mark.prep;
+    expect(prep.n).toBe(2);
+    mark.queryResult(result);
+    expect(mark.prep).toBe(prep);
+    mark.queryResult([...result]);
+    expect(mark.prep).toBeNull();
   });
 });
