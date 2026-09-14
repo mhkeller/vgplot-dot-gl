@@ -290,6 +290,29 @@ describe('DotGLMark: orderby and sort', () => {
   });
 });
 
+describe('DotGLMark: key and tip', () => {
+  it('selects the key under its own name, for every painter, without making key or tip a channel', () => {
+    for (const painter of ['rect2d', 'dot']) {
+      const mark = new DotGLMark({ table: 'trades' }, { x: 'size', y: 'price', key: 'id', tip: { fields: ['party'] }, orderby: 'volume', painter });
+      expect(mark.channels.map(c => c.channel).sort()).toEqual(['x', 'y']);
+      expect(String(mark.query())).toBe('SELECT "size", "price", "id" AS "__dotgl_key" FROM "trades" AS "source" ORDER BY "volume"');
+    }
+  });
+
+  it('throws for tip fields without a key or a database table', () => {
+    expect(() => new DotGLMark({ table: 'trades' }, { x: 'size', y: 'price', tip: { fields: ['party'] } })).toThrow('dotGL: tip.fields needs a key column');
+    expect(() => new DotGLMark(table(10), { x: 'size', y: 'price', key: 'size', tip: { fields: ['party'] } })).toThrow('dotGL: tip.fields needs a database table');
+    expect(() => new DotGLMark({ table: 'trades' }, { x: 'size', y: 'price', tip: true })).not.toThrow();
+  });
+
+  it("gives the 'dot' painter Plot's own tip", () => {
+    const [{ options }] = new DotGLMark(table(10), { x: 'size', y: 'price', tip: true, painter: 'dot' }).plotSpecs();
+    expect(options.tip).toBe(true);
+    const [{ options: plain }] = new DotGLMark(table(10), { x: 'size', y: 'price', painter: 'dot' }).plotSpecs();
+    expect(plain.tip).toBeUndefined();
+  });
+});
+
 describe('DotGLMark: categories', () => {
   const types = { '"party"': 'VARCHAR', '"price"': 'DOUBLE', '"size"': 'DOUBLE' };
 

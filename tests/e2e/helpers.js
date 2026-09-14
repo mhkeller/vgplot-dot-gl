@@ -105,15 +105,24 @@ export function paintedPixels(page, panelIndex) {
 }
 
 /**
- * The row under a screen point, by the same rule the hover probe uses: among dots
- * whose circle covers the point the smallest wins; otherwise the dot whose edge is closest.
+ * The dot under a screen point by the tooltip's rule, worked out one dot at a time from the plot's scales:
+ * among the dots visible in the plot frame, the one drawn last that covers the point (as a circle, like the
+ * 'gl' painter), else the one whose edge is closest, up to 40 px away. Returns its `row` and its center on
+ * screen, or null.
  */
 export function rowUnder(page, panelIndex, clientX, clientY) {
   return page.evaluate(([index, cx, cy]) => {
     const p = demo.panels()[index];
     const svg = p.plotEl.querySelector('svg');
-    const u = new DOMPoint(cx, cy).matrixTransform(svg.getScreenCTM().inverse());
+    const ctm = svg.getScreenCTM();
+    const u = new DOMPoint(cx, cy).matrixTransform(ctm.inverse());
     const xs = svg.scale('x'), ys = svg.scale('y'), rs = svg.scale('r');
+    const fo = svg.querySelector('foreignObject');
+    const [fx, fy, fw, fh] = ['x', 'y', 'width', 'height'].map(name => +fo.getAttribute(name));
+    // The painters move dots half a pixel at pixel ratio 1, so they land on pixel centers.
+    const offset = (window.devicePixelRatio || 1) > 1 ? 0 : 0.5;
+    const x = u.x - fx, y = u.y - fy;
+    if (!(x >= 0 && x <= fw && y >= 0 && y <= fh)) return null;
     const mark = p.plotEl.value.marks[0];
     const cols = mark.data.columns;
     const X = cols[mark.channelField('x', { exact: true }).as];
@@ -121,16 +130,21 @@ export function rowUnder(page, panelIndex, clientX, clientY) {
     const rf = mark.channelField('r', { exact: true });
     const R = rf ? cols[rf.as] : null;
     const rConst = mark.constant('r') ?? 3;
-    let best = -1, bestKey = Infinity;
-    for (let i = 0; i < X.length; ++i) {
-      const d = Math.hypot(xs.apply(X[i]) - u.x, ys.apply(Y[i]) - u.y);
-      if (d > 40) continue;
-      const r = R ? rs.apply(R[i]) : rConst;
-      const key = Math.max(0, d - r) * 1000 + r; // covering dots first, smallest covering dot wins
-      if (key < bestKey) { bestKey = key; best = i; }
+    const { perm, codes, hidden, n } = mark.prep;
+    let best = null;
+    for (let i = 0; i < n; ++i) {
+      const j = perm[i];
+      if (codes[j] === hidden) continue;
+      const px = xs.apply(X[j]) - fx + offset;
+      const py = ys.apply(Y[j]) - fy + offset;
+      const r = R ? rs.apply(R[j]) : rConst;
+      if (!(r > 0 && px + r >= 0 && px - r <= fw && py + r >= 0 && py - r <= fh)) continue;
+      const key = Math.max(0, Math.hypot(px - x, py - y) - r);
+      if (key <= 40 && (!best || key <= best.key)) best = { j, key, px, py };
     }
-    const pt = new DOMPoint(xs.apply(X[best]), ys.apply(Y[best])).matrixTransform(svg.getScreenCTM());
-    return { index: best, x: pt.x, y: pt.y, r: R ? rs.apply(R[best]) : rConst };
+    if (!best) return null;
+    const pt = new DOMPoint(best.px + fx, best.py + fy).matrixTransform(ctm);
+    return { row: best.j, x: pt.x, y: pt.y };
   }, [panelIndex, clientX, clientY]);
 }
 

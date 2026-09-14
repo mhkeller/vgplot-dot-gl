@@ -38,7 +38,7 @@ Same as `vg.dot`:
 | `opacity`, `fillOpacity` | numbers, multiplied together. Overlapping dots add up the way see-through SVG circles do. |
 | `clip` | `true` keeps the dots inside the plot frame |
 
-Options only this mark has. Mosaic and Plot never see them as channels; the mark adds `orderby` to its query itself.
+Options only this mark has. Mosaic and Plot never see them as channels; the mark adds `key` and `orderby` to its query itself.
 
 | option | default | meaning |
 |---|---|---|
@@ -50,27 +50,34 @@ Options only this mark has. Mosaic and Plot never see them as channels; the mark
 | `maxCategories` | `65535` | how many different fill values a database column may have (65,535 at most; array data allows 254) |
 | `benchmark` | `false` | wait for the graphics card after each draw so `mark.stats` shows real times (slows everything; only for measuring) |
 | `fragmentBudget` | `4e7` | how much painting one frame may do before the mark draws at a lower resolution while you zoom, then repaints sharp 150 ms after you stop; `Infinity` turns this off |
+| `key` | `null` | a unique row id: a column name or an expression such as `vg.int32('id')`. It comes back with the data under a private name, and the tooltip looks up extra fields by it. |
+| `tip` | `null` | `true`, or `{ fields, maxRadius }`, shows a tooltip for the dot under the pointer (see [Hover and tooltips](#hover-and-tooltips)) |
 
 After each WebGL draw `mark.stats` holds `{ painter, drawn, uploadMs, drawMs, blitMs, dpr, reduced, estimate }` (the `rect2d` painter gives only `painter`, `drawn` and `drawMs`). After the sharp repaint it also has `refined: true`, and the plot element fires a `dotgl-refine` event.
 
 ## What it doesn't do
 
-No strokes, `symbol`, `rotate`, `dx`/`dy`, per-row opacity, facets (`fx`/`fy`), Plot tooltips (`tip`, `title`, `href`), extra `channels`, or the `select` options. The mosaic `highlight`, `toggle` and `region` interactors don't work either, because they need one SVG element per row. Giving one of those options a column is an error when the mark is created; giving it a constant only logs a warning once, so an old `vg.dot` call still runs. The dots are not part of the SVG if you save it as an image. The mark always fills its dots; with no `fill` at all you get dots in the text color, not Plot's hollow rings.
+No strokes, `symbol`, `rotate`, `dx`/`dy`, per-row opacity, facets (`fx`/`fy`), `title`, `href`, extra `channels`, or the `select` options. The mosaic `highlight`, `toggle` and `region` interactors don't work either, because they need one SVG element per row. Giving one of those options a column is an error when the mark is created; giving it a constant only logs a warning once, so an old `vg.dot` call still runs. The dots are not part of the SVG if you save it as an image. The mark always fills its dots; with no `fill` at all you get dots in the text color, not Plot's hollow rings.
 
 ## Interactors
 
-`nearest`, `intervalX/Y/XY` and `panZoom` work as they do with `vg.dot`. Don't put a brush and `panZoom` on the same plot: the brush catches every drag, and when you let go the zoom never hears about it and keeps panning as you move the mouse. That is how d3's brush and zoom behave together; it has nothing to do with this mark.
+`nearest`, `intervalX/Y/XY` and `panZoom` work as they do with `vg.dot`. `nearest` works out the screen position of every row on each redraw, which adds time to every zoom step on large tables. Don't put a brush and `panZoom` on the same plot: the brush catches every drag, and when you let go the zoom never hears about it and keeps panning as you move the mouse. That is how d3's brush and zoom behave together; it has nothing to do with this mark.
 
 ## Hover and tooltips
 
-There is no SVG element per row to hover, so ask the database which row is under the mouse instead. `demo/hover-probe.js` shows how: turn the mouse position into data values with `svg.scale('x'|'y')`, query for the
-nearest row, and put a ring on it using the SVG's `getScreenCTM()`. Three things to get right:
+```js
+dotGL(vg.from('trades'), { x: 'size', y: 'price', key: vg.int32('id'), tip: { fields: ['id', 'party'] } })
+```
 
-- When dots have different sizes, pick the dot whose circle covers the mouse, not the dot with the nearest center.
-  `radiusSQL` in the demo puts the plot's radius scale into the query.
-- Give the ring `box-sizing: border-box`, or its border pushes it off center.
-- Hide the ring whenever the plot redraws, and on wheel events using a capture listener. d3-zoom stops the wheel event
-  before normal listeners see it, and after a zoom the dots have moved out from under the tooltip.
+With `tip` set, the mark puts a ring around the dot under the pointer and shows a small table next to it: x and y under their axis labels, and `fill` and `r` when they are columns. Text values show as text and dates as ISO dates. The mark finds the dot in the browser from what it painted: the dot drawn on top under the pointer, or else the dot whose edge is nearest, up to `maxRadius` pixels away (default 40). After a redraw, the mark sorts the visible dots into small screen cells once the plot has held still for 150 ms, so zooming stays smooth, and the tip then comes back on the dot under the pointer. When several marks in one plot have `tip`, the plot shows one tip, for the closest dot.
+
+`fields` adds more columns to the table. Once the pointer rests on a dot for 100 ms, the mark asks the database for that one row by `key`, one lookup at a time, and keeps the answers until the table changes. `fields` can be a Param holding the list, so the page can change the list without rebuilding the plot. `fields` needs a `key` and a database table.
+
+- For a 64-bit id, use `vg.int32(...)` when the ids fit. 32-bit integers arrive without copying; 64-bit integers are converted one value at a time on every result.
+- A `BIGINT` value in `fields` beyond ±2^53 has no exact JavaScript number, so its cell stays empty.
+- Put `key` only on marks without aggregates. On a mark with aggregates the database rejects the query, because the key is not in its `GROUP BY`.
+- Style `.dotgl-tip` (the table, with `th` and `td` inside), `.dotgl-ring` and `.dotgl-swatch` (the fill color next to its value). The defaults are wrapped in `:where()`, so any rule on the page wins.
+- With `painter: 'dot'`, the SVG dots get Plot's own tooltip, which shows x, y, fill and r but no extra fields.
 
 ## Large data
 
@@ -83,12 +90,12 @@ nearest row, and put a ring on it using the SVG's `getScreenCTM()`. Three things
 
 ```bash
 pnpm dev               # Vite demo: DuckDB-WASM, 500k made-up rows, seven plots, timings, zoom test, side by side with vg.dot
-pnpm test              # unit tests (tests/unit): scale math against d3, prepare(), colors, and a jsdom check of the scale hints
+pnpm test              # unit tests (tests/unit): scale math against d3, prepare(), colors, picking, tooltip lookups, and a jsdom check of the scale hints
 pnpm test:e2e          # browser tests: Chromium, Firefox and WebKit, plus Chromium at pixel ratio 1
 pnpm test:e2e:update   # rewrite the screenshot baselines after a visual change you meant to make
 ```
 
-The browser suite (`tests/e2e/`) opens the demo with seeded data (`?rows=50000&seed=0.42`) and, in each browser, checks that all seven plots draw without errors, that dots land exactly where `vg.dot` puts its circles and stay lined up with the axes after zooming, that a text axis and a text fill with 601 values put each dot at its category in its color, that a brush filters the linked panel, that the hover ring lands on the dot under the mouse, that the mark recovers when the browser drops the WebGL context, and that a narrow page still lines up. Screenshot baselines sit next to the specs, one per browser, with the timing text masked out. `tests/e2e/perf.spec.js` loads 500k rows per plot and prints the timings and the name of the graphics driver. Headless browsers sometimes draw in software; treat those numbers as a worst case.
+The browser suite (`tests/e2e/`) opens the demo with seeded data (`?rows=50000&seed=0.42`) and, in each browser, checks that all seven plots draw without errors, that dots land exactly where `vg.dot` puts its circles and stay lined up with the axes after zooming, that a text axis and a text fill with 601 values put each dot at its category in its color, that a brush filters the linked panel, that the hover ring lands on the dot under the mouse and the tooltip shows its id, that the mark recovers when the browser drops the WebGL context, and that a narrow page still lines up. Screenshot baselines sit next to the specs, one per browser, with the timing text masked out. `tests/e2e/perf.spec.js` loads 500k rows per plot and prints the timings, the pick index build and pick times, and the name of the graphics driver. Headless browsers sometimes draw in software; treat those numbers as a worst case.
 
 Results: the suite passes in Chromium, Firefox and WebKit (Safari's engine) on macOS at pixel ratio 2 and 1. Firefox and WebKit use the real graphics card even headless and zoom 500k rows at 44–48 fps, with the copy step under 2 ms. Headless Chromium draws in software, so only its pass/fail counts.
 

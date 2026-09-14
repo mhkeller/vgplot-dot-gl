@@ -3,7 +3,7 @@ import { Plot } from '@uwdata/mosaic-plot';
 import * as vg from '@uwdata/vgplot';
 import { dotGL } from '../src/index.js';
 import { getSharedGL, disposeSharedGL } from '../src/shared-gl.js';
-import { hoverProbe } from './hover-probe.js';
+import { buildPickIndex, pickDot } from '../src/pick.js';
 
 const PARTY_COLORS = { D: '#2166ac', R: '#b2182b', I: '#4d9221', G: '#e08214' };
 const POINT_COLOR = '#4a6fa5';
@@ -66,7 +66,7 @@ const PANELS = [
 let brush = null;
 let panels = [];
 
-async function buildPanel(spec, { rows, painter, benchmark, host }) {
+async function buildPanel(spec, { painter, benchmark }) {
   const view = 'pts';
   const marks = [];
   const colored = !!spec.fill;
@@ -89,6 +89,8 @@ async function buildPanel(spec, { rows, painter, benchmark, host }) {
       opacity: 0.6,
       clip: true,
       fill: colored ? spec.fill : POINT_COLOR,
+      key: vg.int32('id'),
+      tip: { fields: ['id', 'party'] },
       painter,
       benchmark
     })
@@ -115,36 +117,14 @@ async function buildPanel(spec, { rows, painter, benchmark, host }) {
   if (spec.brush) marks.push(vg.intervalXY({ as: brush, brush: { fill: 'none', stroke: '#333' } }));
   else marks.push(vg.panZoom({ x: xZoom, y: yZoom, xfield: spec.x, yfield: spec.y }));
   if (spec.log) marks.push(vg.xScale('log'), vg.yScale('log'));
-  marks.push(
-    hoverProbe({
-      view, x: spec.x, y: spec.y, r: sized ? spec.size : 2.5, columns: ['id', 'party', ...(spec.fill === 'shift' ? ['shift'] : [])], query,
-      onHover: hit => host.showHit(hit, spec)
-    })
-  );
   return vg.plot(...marks);
 }
 
 function makePanelHost(spec) {
   const panel = document.createElement('div');
   panel.className = 'panel';
-  panel.innerHTML = `<h3><span>${spec.title}</span></h3><div class="stats">…</div><div class="stage"><div class="host"></div><span class="ring"></span><div class="tip"></div></div>`;
-  const stats = panel.querySelector('.stats');
-  const stage = panel.querySelector('.stage');
-  const ring = panel.querySelector('.ring');
-  const tip = panel.querySelector('.tip');
-  const host = {
-    panel,
-    mount: stage.querySelector('.host'),
-    stats,
-    showHit(hit, spec) {
-      if (!hit) { ring.style.display = tip.style.display = 'none'; return; }
-      ring.style.display = tip.style.display = 'block';
-      ring.style.left = tip.style.left = `${hit.left}px`;
-      ring.style.top = tip.style.top = `${hit.top}px`;
-      tip.textContent = `id ${hit.row.id} · ${hit.row.party ?? ''} · ${spec.x} ${Number(hit.row[spec.x]).toFixed(2)} · ${spec.y} ${Number(hit.row[spec.y]).toFixed(2)}${spec.fill === 'shift' ? ` · shift ${Number(hit.row.shift).toFixed(3)}` : ''}`;
-    }
-  };
-  return host;
+  panel.innerHTML = `<h3><span>${spec.title}</span></h3><div class="stats">…</div><div class="host"></div>`;
+  return { panel, mount: panel.querySelector('.host'), stats: panel.querySelector('.stats') };
 }
 
 function describeStats(plotEl, ms) {
@@ -188,7 +168,7 @@ async function rebuild() {
   for (const spec of PANELS) {
     const host = makePanelHost(spec);
     ui.grid.append(host.panel);
-    const plotEl = await buildPanel(spec, { rows, painter, benchmark, host });
+    const plotEl = await buildPanel(spec, { painter, benchmark });
     plotEl.addEventListener('rendered', e => { host.stats.textContent = describeStats(plotEl, e.detail.ms); });
     plotEl.addEventListener('dotgl-refine', () => { host.stats.textContent = describeStats(plotEl, NaN); });
     host.mount.replaceChildren(plotEl);
@@ -259,7 +239,7 @@ document.getElementById('compare').addEventListener('click', () => compare());
 ui.painter.addEventListener('change', () => rebuild());
 ui.rows.addEventListener('change', () => rebuild());
 
-window.demo = { rebuild, zoomTest, compare, panels: () => panels, vg, getSharedGL, disposeSharedGL, dotGL };
+window.demo = { rebuild, zoomTest, compare, panels: () => panels, vg, getSharedGL, disposeSharedGL, dotGL, buildPickIndex, pickDot };
 if (params.has('rows')) {
   const rows = params.get('rows');
   if (![...ui.rows.options].some(o => o.value === rows)) ui.rows.add(new Option(rows, rows));

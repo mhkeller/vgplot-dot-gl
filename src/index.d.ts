@@ -19,6 +19,10 @@ export interface DotGLOptions {
   benchmark?: boolean;
   /** How much painting one frame may do before the mark draws at a lower resolution while you zoom. Default 4e7. */
   fragmentBudget?: number;
+  /** A unique row id: a column name or an expression such as `vg.int32('id')`. The tooltip looks up `tip.fields` by it. */
+  key?: unknown;
+  /** Show a tooltip for the dot under the pointer. `fields` (column names, or a Param holding them) need `key` and a database table; `maxRadius` defaults to 40 px. */
+  tip?: boolean | { fields?: string[] | { value: string[] }; maxRadius?: number };
   [option: string]: unknown;
 }
 

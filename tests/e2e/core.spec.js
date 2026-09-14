@@ -145,21 +145,51 @@ test.describe('dotGL core behavior', () => {
     expect(errors).toEqual([]);
   });
 
-  test('the hover probe rings the dot under the cursor, centered on it', async ({ page }) => {
+  test('the tooltip rings the dot under the cursor and shows its id', async ({ page }) => {
     const errors = await openDemo(page);
-    for (const panelIndex of [2, 1]) { // constant radius, then sized dots
+    // Constant radius, then sized dots, then constant radius in a container narrow enough to shrink the SVG.
+    for (const [panelIndex, narrow] of [[2, false], [1, false], [2, true]]) {
+      const panel = page.locator('.panel').nth(panelIndex);
+      if (narrow) await panel.locator('.host').evaluate(el => { el.style.width = '300px'; });
+      const ring = panel.locator('.dotgl-ring');
+      const tip = panel.locator('.dotgl-tip');
       const geo = await plotGeometry(page, panelIndex, 1234);
-      await page.mouse.move(geo.row.x, geo.row.y);
+      // Whole pixels, because Firefox rounds mouse positions down and the pick would land on a different dot.
+      const at = { x: Math.round(geo.row.x) + 1, y: Math.round(geo.row.y) };
+      await page.mouse.move(at.x - 1, at.y);
       await page.waitForTimeout(100);
-      await page.mouse.move(geo.row.x + 1, geo.row.y);
-      const ring = page.locator('.panel').nth(panelIndex).locator('.ring');
+      await page.mouse.move(at.x, at.y);
       await expect(ring).toBeVisible({ timeout: 10_000 });
+      await expect(tip).toBeVisible();
+      // Let the second move's pick land.
       await page.waitForTimeout(300);
-      const expected = await rowUnder(page, panelIndex, geo.row.x + 1, geo.row.y);
-      const box = await ring.boundingBox();
-      const ringCenter = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-      // The ring is centered on the chosen dot, and the chosen dot is the one covering the mouse.
-      expect(Math.hypot(ringCenter.x - expected.x, ringCenter.y - expected.y), `panel ${panelIndex}`).toBeLessThan(1.5);
+      /** The ring is centered on the dot the rule picks at the pointer. Returns that dot. */
+      const ringOnPick = async () => {
+        const expected = await rowUnder(page, panelIndex, at.x, at.y);
+        expect(expected, `panel ${panelIndex}`).not.toBeNull();
+        const box = await ring.boundingBox();
+        expect(Math.hypot(box.x + box.width / 2 - expected.x, box.y + box.height / 2 - expected.y), `panel ${panelIndex}`).toBeLessThan(1.5);
+        return expected;
+      };
+      const expected = await ringOnPick();
+      if (narrow) {
+        const shrink = await page.evaluate(index => { const svg = demo.panels()[index].plotEl.querySelector('svg'); return svg.getBoundingClientRect().width / +svg.getAttribute('width'); }, panelIndex);
+        expect(shrink).toBeLessThan(0.9);
+      }
+      // The id comes from the lookup by key once the pointer rests; it may be formatted with thousands separators.
+      const key = await page.evaluate(([index, row]) => demo.panels()[index].plotEl.value.marks[0].data.columns.__dotgl_key[row], [panelIndex, expected.row]);
+      const idCell = tip.locator('tr', { has: page.locator('th', { hasText: /^id$/ }) }).locator('td');
+      await expect.poll(async () => (await idCell.allTextContents()).join('').replace(/,/g, ''), { timeout: 10_000 }).toBe(String(key));
+      // A zoom step redraws the plot. The pointer stays put, so the ring comes back in the new SVG on the dot now under it.
+      await page.evaluate(index => { window.svgBeforeZoom = demo.panels()[index].plotEl.querySelector('svg'); }, panelIndex);
+      await page.mouse.wheel(0, -40);
+      await expect.poll(() => page.evaluate(index => {
+        const svg = demo.panels()[index].plotEl.querySelector('svg');
+        return svg !== window.svgBeforeZoom && !!svg.querySelector('.dotgl-ring');
+      }, panelIndex), { timeout: 10_000 }).toBe(true);
+      await settle(page, panelIndex);
+      await expect(ring).toBeVisible({ timeout: 10_000 });
+      await ringOnPick();
     }
     expect(errors).toEqual([]);
   });

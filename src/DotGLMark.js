@@ -7,14 +7,15 @@ import { categoryLine } from './scale-map.js';
 import { getSharedGL } from './shared-gl.js';
 import { paintGL, freeGPU } from './painters/gl.js';
 import { paintRect2D } from './painters/rect2d.js';
+import { DotGLTip, KEY_AS } from './tip.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 
-/** Options that are ours. They never become Mosaic channels or Plot options; the mark adds `orderby` to its query itself. */
-const OWN_OPTIONS = ['painter', 'fallback', 'blit', 'sort', 'orderby', 'maxCategories', 'benchmark', 'fragmentBudget'];
+/** Options that are ours. They never become Mosaic channels or Plot options; the mark adds `key` and `orderby` to its query itself. */
+const OWN_OPTIONS = ['painter', 'fallback', 'blit', 'sort', 'orderby', 'maxCategories', 'benchmark', 'fragmentBudget', 'key', 'tip'];
 
 /** vg.dot options we accept as constants but can't draw. We warn once per mark. */
-const IGNORED_OPTIONS = ['stroke', 'strokeWidth', 'strokeOpacity', 'symbol', 'rotate', 'dx', 'dy', 'tip', 'title', 'href', 'select', 'frameAnchor'];
+const IGNORED_OPTIONS = ['stroke', 'strokeWidth', 'strokeOpacity', 'symbol', 'rotate', 'dx', 'dy', 'title', 'href', 'select', 'frameAnchor'];
 
 /** The only options that can be a column. */
 const COLUMN_CHANNELS = ['x', 'y', 'r', 'fill'];
@@ -78,6 +79,10 @@ function categorySQL(col, cats) {
  * - fragmentBudget: how much painting one frame may do before the mark draws at a
  *   lower resolution while you zoom and repaints sharp once you stop (default 4e7;
  *   Infinity turns it off)
+ * - key: an expression for a unique row id, added to the query under a private name
+ *   so the tooltip can look up more fields for one row
+ * - tip: true, or `{ fields, maxRadius }`, shows a tooltip for the dot under the pointer;
+ *   `fields` (an array of column names, or a Param holding one) are looked up by key
  *
  * The x, y and fill columns are handled by their database type. Number and date
  * columns come back as doubles (dates as epoch milliseconds). Text and boolean
@@ -99,7 +104,9 @@ export class DotGLMark extends Mark {
     if (own.sort !== undefined && own.sort !== null && own.sort !== '-r') {
       throw new Error("dotGL: sort must be '-r' or null (use orderby to set the draw order)");
     }
+    if (own.tip?.fields && own.key == null) throw new Error('dotGL: tip.fields needs a key column');
     super('dot', source, rest);
+    if (own.tip?.fields && this.hasOwnData()) throw new Error('dotGL: tip.fields needs a database table');
     for (const c of this.channels) {
       if (c.field && !COLUMN_CHANNELS.includes(c.channel)) {
         throw new Error(`dotGL: the "${c.channel}" option cannot be bound to a column (only x, y, r and fill can)`);
@@ -115,6 +122,10 @@ export class DotGLMark extends Mark {
     this.maxCategories = Math.min(MAX_FILL_CATEGORIES, own.maxCategories ?? MAX_FILL_CATEGORIES);
     this.benchmark = !!own.benchmark;
     this.fragmentBudget = own.fragmentBudget ?? 4e7;
+    this.key = own.key ?? null;
+    this.tip = own.tip ? (own.tip === true ? {} : own.tip) : null;
+    /** Extra tooltip fields by key, filled in by the tooltip. */
+    this.tipRows = new Map();
     this.refineTimer = null;
     this.lastPaint = null;
     this.prep = null;
@@ -128,6 +139,12 @@ export class DotGLMark extends Mark {
     this.render = this.render.bind(this);
   }
 
+  /** Mosaic calls this when the mark joins a plot. With `tip` set, the mark brings its own tooltip interactor. */
+  setPlot(plot, index) {
+    super.setPlot(plot, index);
+    if (this.tip) plot.addInteractor(new DotGLTip(this, this.tip));
+  }
+
   /**
    * Runs once per table, before the first query. Mosaic looks up each column's
    * type. For text and boolean columns on x, y and fill this fetches the distinct
@@ -135,6 +152,8 @@ export class DotGLMark extends Mark {
    */
   async prepare() {
     await super.prepare();
+    // A new table or a changed field expression can change the rows behind each key.
+    this.tipRows = new Map();
     // A result for the old query can still arrive while this waits. It is read with the old lists, which its
     // codes point into, so the new lists replace them only once they are complete.
     const categories = new Map();
@@ -187,12 +206,14 @@ export class DotGLMark extends Mark {
 
   /**
    * The mark's data query. Column channels come back as numbers the painters can
-   * use directly: category codes, doubles, or dates as epoch milliseconds.
+   * use directly: category codes, doubles, or dates as epoch milliseconds. The key
+   * comes back as it is, under a name Plot never sees.
    */
   query(filter) {
     const q = super.query(filter);
     if (!q) return q;
     if (this.orderby != null) q.orderby(this.orderby);
+    if (this.key != null) q.select({ [KEY_AS]: this.key });
     if (this.activePainter() === 'dot') return q;
     for (const name of COLUMN_CHANNELS) {
       const c = this.channelField(name, { exact: true });
@@ -260,7 +281,12 @@ export class DotGLMark extends Mark {
 
   plotSpecs() {
     if (!this.data || this.destroyed) return [];
-    if (this.activePainter() === 'dot') return super.plotSpecs();
+    if (this.activePainter() === 'dot') {
+      // SVG dots get Plot's own tooltip, which shows x, y, fill and r.
+      const specs = super.plotSpecs();
+      if (this.tip) specs[0].options.tip = true;
+      return specs;
+    }
     const prep = (this.prep ??= this.prepareData());
     const options = { sort: null, render: this.render };
     for (const c of this.channels) {
@@ -338,16 +364,11 @@ export class DotGLMark extends Mark {
 
     clearTimeout(this.refineTimer);
     const painter = this.activePainter();
-    const params = { sx, sy, sr, lines, frame, style, prep };
-    if (painter === 'gl') {
-      this.stats = paintGL(this, canvas, params, { allowReduce: true });
-      if (this.stats.reduced) {
-        this.lastPaint = params;
-        this.refineTimer = setTimeout(() => this.refine(params), REFINE_DELAY_MS);
-      }
-    } else {
-      this.stats = paintRect2D(this, canvas, params);
-    }
+    // Everything the tooltip needs to find the dots on screen again, and when they were painted.
+    const params = { sx, sy, sr, lines, frame, style, prep, painter, labels: { x: scales.x?.label, y: scales.y?.label }, at: performance.now() };
+    this.stats = painter === 'gl' ? paintGL(this, canvas, params, { allowReduce: true }) : paintRect2D(this, canvas, params);
+    this.lastPaint = this.stats.skipped ? null : params;
+    if (this.stats.reduced) this.refineTimer = setTimeout(() => this.refine(params), REFINE_DELAY_MS);
 
     const fo = doc.createElementNS(SVG, 'foreignObject');
     fo.setAttribute('x', fx);
@@ -371,6 +392,7 @@ export class DotGLMark extends Mark {
   destroy() {
     this.destroyed = true;
     clearTimeout(this.refineTimer);
+    this.lastPaint = null;
     super.destroy?.();
     freeGPU(this);
     if (this.canvas) {
