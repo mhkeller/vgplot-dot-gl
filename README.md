@@ -17,6 +17,14 @@ vg.plot(
 
 Change `vg.dot(` to `dotGL(` and you're done. If you use a `vg` API object, you can add it there: `createAPIContext({ extensions: { dotGL } })`.
 
+## Install
+
+```bash
+npm install @mhkeller/vgplot-dot-gl @uwdata/vgplot
+```
+
+It works with Mosaic 0.31 (`@uwdata/vgplot` 0.31.x). The mark builds on Mosaic's own `Mark` class, so it lists `@uwdata/mosaic-core`, `@uwdata/mosaic-plot` and `@uwdata/mosaic-sql` as peer dependencies, and the page needs exactly one copy of each.
+
 ## How it works
 
 vgplot builds each chart with Observable Plot, which normally makes one SVG circle for every row. That is what gets slow. This mark keeps Plot for the axes, scales and legend, and takes over only the drawing of the points:
@@ -98,6 +106,6 @@ pnpm test:e2e:update   # rewrite the screenshot baselines after a visual change 
 
 The browser suite (`tests/e2e/`) opens the demo with seeded data (`?rows=50000&seed=0.42`) and, in each browser, checks that all seven plots draw without errors, that dots land exactly where `vg.dot` puts its circles and stay lined up with the axes after zooming, that a text axis and a text fill with 601 values put each dot at its category in its color, that a brush filters the linked panel, that the hover ring lands on the dot under the mouse and the tooltip shows its id, that the mark recovers when the browser drops the WebGL context, and that a narrow page still lines up. Screenshot baselines sit next to the specs, one per browser, with the timing text masked out. `tests/e2e/perf.spec.js` loads 500k rows per plot and prints the timings, the pick index build and pick times, and the name of the graphics driver. Headless browsers sometimes draw in software; treat those numbers as a worst case.
 
-Results: the suite passes in Chromium, Firefox and WebKit (Safari's engine) on macOS at pixel ratio 2 and 1. Firefox and WebKit use the real graphics card even headless and zoom 500k rows at 44–48 fps, with the copy step under 2 ms. Headless Chromium draws in software, so only its pass/fail counts.
+Results: the suite passes in Chromium, Firefox and WebKit (Safari's engine) on macOS at pixel ratio 2 and 1. Firefox and WebKit use the real graphics card even headless and zoom 500k rows at 43–50 fps, with the copy step under 2 ms. At 500k rows the hover index takes 10–30 ms to build after a redraw, and finding the dot under the pointer takes under 0.03 ms. Headless Chromium draws in software, so only its pass/fail counts.
 
 Measured in Chromium on an Apple M3 with a high-resolution screen, 500k rows in each of seven 430×330 plots: all seven ready about 1.2 s after the data arrives; zooming one plot at about 33 fps; the same 50k-row plot takes 125 ms as SVG circles and 7 ms here; 2M rows per plot load in about 2 s and zoom at about 30 fps at lower resolution. What limits speed is how many pixels get painted, not how many rows: big see-through dots on a high-resolution screen are the slow case, and that is what the lower-resolution-while-zooming behavior is for.
