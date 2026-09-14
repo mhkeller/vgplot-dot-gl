@@ -14,10 +14,14 @@ import { VERTEX, FRAGMENT, UNIFORMS } from './shaders.js';
  *   WebGL canvas is slow.
  */
 
-let shared = null;
-let unsupported = false;
-/** Counts contexts and context losses over the life of the page, so data left over from an old context is never used as if it were still there. */
-let generation = 0;
+// Two library copies on one page share this record, so bump the number when the shaders, the attribute layout or the state object's methods change.
+const KEY = Symbol.for('vgplot-dot-gl/shared-gl@1');
+
+/**
+ * The page-wide record, made the first time it is read. `generation` counts contexts and context
+ * losses over the life of the page, so data left over from an old context is never used as if it were still there.
+ */
+const page = () => (globalThis[KEY] ??= { shared: null, unsupported: false, generation: 0 });
 
 const CORNERS = new Float32Array([-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1]);
 
@@ -69,8 +73,9 @@ function setup(state) {
  * @param {'drawImage'|'bitmaprenderer'} [blit]
  */
 export function getSharedGL(blit = 'drawImage') {
-  if (shared) return shared;
-  if (unsupported || typeof document === 'undefined') return null;
+  const record = page();
+  if (record.shared) return record.shared;
+  if (record.unsupported || typeof document === 'undefined') return null;
   const offscreen = blit === 'bitmaprenderer' && typeof OffscreenCanvas !== 'undefined';
   const canvas = offscreen ? new OffscreenCanvas(1, 1) : document.createElement('canvas');
   const gl = canvas.getContext('webgl2', {
@@ -79,11 +84,10 @@ export function getSharedGL(blit = 'drawImage') {
     antialias: false,
     depth: false,
     stencil: false,
-    preserveDrawingBuffer: false,
-    powerPreference: 'high-performance'
+    preserveDrawingBuffer: false
   });
   if (!gl) {
-    unsupported = true;
+    record.unsupported = true;
     return null;
   }
   const state = {
@@ -93,7 +97,7 @@ export function getSharedGL(blit = 'drawImage') {
     /** Marks that currently have data stored here. */
     refs: new Set(),
     /** Goes up when the context is lost, so we know the stored data is gone. */
-    generation: ++generation,
+    generation: ++record.generation,
     lost: false,
     maxSize: gl.getParameter(gl.MAX_RENDERBUFFER_SIZE)
   };
@@ -102,7 +106,7 @@ export function getSharedGL(blit = 'drawImage') {
   canvas.addEventListener('webglcontextlost', event => {
     event.preventDefault();
     state.lost = true;
-    state.generation = ++generation;
+    state.generation = ++page().generation;
   });
   canvas.addEventListener('webglcontextrestored', () => {
     setup(state);
@@ -176,22 +180,18 @@ export function getSharedGL(blit = 'drawImage') {
     ctx.drawImage(canvas, 0, 0, pw, ph, 0, 0, pw, ph);
   };
 
-  shared = state;
-  return shared;
-}
-
-/** True when this page can draw dots with WebGL. Creates the context if needed. */
-export function isDotGLSupported() {
-  return getSharedGL() != null;
+  record.shared = state;
+  return state;
 }
 
 /** Let go of the shared context. For tests and page teardown; live marks send their data again on their next draw. */
 export function disposeSharedGL() {
-  if (!shared) return;
-  const state = shared;
+  const record = page();
+  const state = record.shared;
+  if (!state) return;
   for (const mark of Array.from(state.refs)) mark.gpu = null;
   state.refs.clear();
-  state.generation = ++generation;
+  state.generation = ++record.generation;
   state.gl.getExtension('WEBGL_lose_context')?.loseContext();
-  shared = null;
+  record.shared = null;
 }

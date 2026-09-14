@@ -1,9 +1,0 @@
-# deck.gl is only here as a reference; nothing imports it. Through an ArcGIS package it
-# pulls in @vaadin/vaadin-usage-statistics, which has an install script. pnpm won't run scripts it hasn't been told about,
-# and pnpm 11 treats an undecided one as an error, so the decision is written down
-# here: the script stays off. `allowBuilds` is what pnpm 11 reads; the list below is
-# what pnpm 10 reads.
-allowBuilds:
-  '@vaadin/vaadin-usage-statistics': false
-ignoredBuiltDependencies:
-  - '@vaadin/vaadin-usage-statistics'

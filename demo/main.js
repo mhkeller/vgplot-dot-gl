@@ -1,7 +1,8 @@
 import { wasmConnector } from '@uwdata/mosaic-core';
 import { Plot } from '@uwdata/mosaic-plot';
 import * as vg from '@uwdata/vgplot';
-import { dotGL, getSharedGL, disposeSharedGL } from '../src/index.js';
+import { dotGL } from '../src/index.js';
+import { getSharedGL, disposeSharedGL } from '../src/shared-gl.js';
 import { hoverProbe } from './hover-probe.js';
 
 const PARTY_COLORS = { D: '#2166ac', R: '#b2182b', I: '#4d9221', G: '#e08214' };

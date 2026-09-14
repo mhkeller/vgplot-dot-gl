@@ -4,7 +4,7 @@ A faster `dot` mark for [vgplot](https://idl.uw.edu/mosaic/). Same options as `v
 
 ```js
 import * as vg from '@uwdata/vgplot';
-import { dotGL } from 'vgplot-dot-gl';
+import { dotGL } from '@mhkeller/vgplot-dot-gl';
 
 vg.plot(
   dotGL(vg.from('trades'), { x: 'size', y: 'price', r: 'volume', fill: 'party', opacity: 0.6, clip: true }),
