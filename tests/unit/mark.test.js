@@ -543,4 +543,15 @@ describe('DotGLMark: queryResult', () => {
     mark.queryResult([...result]);
     expect(mark.prep).toBeNull();
   });
+
+  it("doesn't ask the plot to draw before its first result", () => {
+    const mark = new DotGLMark({ table: 'trades' }, { x: 'size', y: 'price', opacity: 0.5 });
+    const synch = { promise: Promise.resolve() };
+    mark.plot = { update: vi.fn(() => synch.promise), synch };
+    expect(mark.update()).toBe(synch.promise);
+    expect(mark.plot.update).not.toHaveBeenCalled();
+    mark.queryResult([{ size: 1, price: 2 }]);
+    mark.update();
+    expect(mark.plot.update).toHaveBeenCalledWith(mark);
+  });
 });

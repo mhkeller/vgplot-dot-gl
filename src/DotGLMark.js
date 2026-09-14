@@ -238,6 +238,15 @@ export class DotGLMark extends Mark {
     return this;
   }
 
+  /**
+   * A Param option (opacity, say) asks the plot to draw as soon as it changes. Before the first result
+   * that draw has no x and y scales, and mosaic's pan/zoom sets itself up once, on the first draw, so it
+   * would fail for good. The mark waits for its data; the draw after the result uses the latest values.
+   */
+  update() {
+    return this.data ? super.update() : this.plot?.synch.promise;
+  }
+
   /** The value of a constant option such as r: 2.5 or opacity: 0.6. */
   constant(name) {
     const c = this.channel(name);
