@@ -38,7 +38,7 @@ Same as `vg.dot`:
 | `opacity`, `fillOpacity` | numbers, multiplied together. Overlapping dots add up the way see-through SVG circles do. |
 | `clip` | `true` keeps the dots inside the plot frame |
 
-Options only this mark has. Mosaic and Plot never see them as channels; the mark adds `key` and `orderby` to its query itself.
+Options only this mark has. Mosaic and Plot never see them as channels; the mark adds `key`, `groupby` and `orderby` to its query itself.
 
 | option | default | meaning |
 |---|---|---|
@@ -51,6 +51,7 @@ Options only this mark has. Mosaic and Plot never see them as channels; the mark
 | `benchmark` | `false` | wait for the graphics card after each draw so `mark.stats` shows real times (slows everything; only for measuring) |
 | `fragmentBudget` | `4e7` | how much painting one frame may do before the mark draws at a lower resolution while you zoom, then repaints sharp 150 ms after you stop; `Infinity` turns this off |
 | `key` | `null` | a unique row id: a column name or an expression such as `vg.int32('id')`. It comes back with the data under a private name, and the tooltip looks up extra fields by it. |
+| `groupby` | `null` | a column name, `vg.column()`, a `vg.sql` expression, or an array of them, that the query groups by: one dot per group, for marks whose x and y are aggregates such as `vg.avg('price')`. Any `x`, `y`, `r` or `fill` column that is not an aggregate joins the grouping too, giving one dot per group and value. A group column comes back under its own name, so `orderby` can sort by it. An expression, or a column whose name a channel already uses, comes back under a private name (`__dotgl_group_0`, `__dotgl_group_1`, ...). The tooltip shows each group column first; one that is also the `fill` column shows once, with its color swatch. It needs a database table. On a mark with no aggregate channel the database rejects the query, because x and y are not in its `GROUP BY`. |
 | `tip` | `null` | `true`, or `{ fields, maxRadius }`, shows a tooltip for the dot under the pointer (see [Hover and tooltips](#hover-and-tooltips)) |
 
 After each WebGL draw `mark.stats` holds `{ painter, drawn, uploadMs, drawMs, blitMs, dpr, reduced, estimate }` (the `rect2d` painter gives only `painter`, `drawn` and `drawMs`). After the sharp repaint it also has `refined: true`, and the plot element fires a `dotgl-refine` event.
@@ -69,7 +70,7 @@ No strokes, `symbol`, `rotate`, `dx`/`dy`, per-row opacity, facets (`fx`/`fy`), 
 dotGL(vg.from('trades'), { x: 'size', y: 'price', key: vg.int32('id'), tip: { fields: ['id', 'party'] } })
 ```
 
-With `tip` set, the mark puts a ring around the dot under the pointer and shows a small table next to it: x and y under their axis labels, and `fill` and `r` when they are columns. Text values show as text and dates as ISO dates. The mark finds the dot in the browser from what it painted: the dot drawn on top under the pointer, or else the dot whose edge is nearest, up to `maxRadius` pixels away (default 40). After a redraw, the mark sorts the visible dots into small screen cells once the plot has held still for 150 ms, so zooming stays smooth, and the tip then comes back on the dot under the pointer. When several marks in one plot have `tip`, the plot shows one tip, for the closest dot.
+With `tip` set, the mark puts a ring around the dot under the pointer and shows a small table next to it: x and y under their axis labels, and `fill` and `r` when they are columns. The `groupby` columns come first, each under its column name, or its SQL for an expression. Text values show as text and dates as ISO dates. The mark finds the dot in the browser from what it painted: the dot drawn on top under the pointer, or else the dot whose edge is nearest, up to `maxRadius` pixels away (default 40). After a redraw, the mark sorts the visible dots into small screen cells once the plot has held still for 150 ms, so zooming stays smooth, and the tip then comes back on the dot under the pointer. When several marks in one plot have `tip`, the plot shows one tip, for the closest dot.
 
 `fields` adds more columns to the table. Once the pointer rests on a dot for 100 ms, the mark asks the database for that one row by `key`, one lookup at a time, and keeps the answers until the table changes. `fields` can be a Param holding the list, so the page can change the list without rebuilding the plot. `fields` needs a `key` and a database table.
 
@@ -77,7 +78,7 @@ With `tip` set, the mark puts a ring around the dot under the pointer and shows 
 - A `BIGINT` value in `fields` beyond ±2^53 has no exact JavaScript number, so its cell stays empty.
 - Put `key` only on marks without aggregates. On a mark with aggregates the database rejects the query, because the key is not in its `GROUP BY`.
 - Style `.dotgl-tip` (the table, with `th` and `td` inside), `.dotgl-ring` and `.dotgl-swatch` (the fill color next to its value). The defaults are wrapped in `:where()`, so any rule on the page wins.
-- With `painter: 'dot'`, the SVG dots get Plot's own tooltip, which shows x, y, fill and r but no extra fields.
+- With `painter: 'dot'`, the SVG dots get Plot's own tooltip, which shows x, y, fill and r but no group columns or extra fields.
 
 ## Large data
 

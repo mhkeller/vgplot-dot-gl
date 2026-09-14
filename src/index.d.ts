@@ -1,5 +1,5 @@
 import type { Mark } from '@uwdata/mosaic-plot';
-import type { OrderByExpr } from '@uwdata/mosaic-sql';
+import type { GroupByExpr, OrderByExpr } from '@uwdata/mosaic-sql';
 
 /** The vg.dot options (x, y, r, fill, opacity, fillOpacity, clip, ...) plus the options only this mark has. */
 export interface DotGLOptions {
@@ -21,6 +21,8 @@ export interface DotGLOptions {
   fragmentBudget?: number;
   /** A unique row id: a column name or an expression such as `vg.int32('id')`. The tooltip looks up `tip.fields` by it. */
   key?: unknown;
+  /** Columns the query groups by, for x and y aggregates: a column name, `column()` or expression, or an array of them. The tooltip shows each one. */
+  groupby?: GroupByExpr | null;
   /** Show a tooltip for the dot under the pointer. `fields` (column names, or a Param holding them) need `key` and a database table; `maxRadius` defaults to 40 px. */
   tip?: boolean | { fields?: string[] | { value: string[] }; maxRadius?: number };
   [option: string]: unknown;

@@ -360,6 +360,40 @@ describe('DotGLTip', () => {
     expect(rows()).toEqual([['letter', ''], ['a', '50'], ['party', 'R']]);
   });
 
+  it('shows the group columns first, under their column names', async () => {
+    const columns = {
+      ...line(),
+      region: Array.from({ length: 10 }, (_, i) => `<i>r${i}</i>`),
+      day: Array.from({ length: 10 }, (_, i) => new Date(Date.UTC(2021, 4, 1 + i))),
+      amount: Float64Array.from({ length: 10 }, (_, i) => 1000.5 * i)
+    };
+    const groupby = ['region', 'day', 'amount'];
+    const { element, moveTo, rows } = hovered(columns, { x: 'a', y: 'b', r: 3, groupby, key: null, tip: true });
+    await vi.advanceTimersByTimeAsync(200);
+    moveTo(4);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(rows()).toEqual([['region', '<i>r4</i>'], ['day', '2021-05-05'], ['amount', '4,002'], ['a', '40'], ['b', '5']]);
+    expect(element.querySelector('.dotgl-tip i')).toBeNull();
+  });
+
+  it('shows a group column that is also the fill column once, in the group row with the swatch', async () => {
+    const columns = {
+      ...line(),
+      party: Uint8Array.from({ length: 10 }, (_, i) => i % 2),
+      __dotgl_group_0: Array.from({ length: 10 }, (_, i) => ['D', 'R'][i % 2])
+    };
+    const { element, moveTo, rows } = hovered(columns, { x: 'a', y: 'b', r: 3, fill: 'party', groupby: 'party', key: null, tip: true }, {
+      categories: { party: ['D', 'R'] }
+    });
+    await vi.advanceTimersByTimeAsync(200);
+    moveTo(5);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(rows()).toEqual([['party', 'R'], ['a', '50'], ['b', '5']]);
+    const swatches = element.querySelectorAll('.dotgl-tip .dotgl-swatch');
+    expect(swatches).toHaveLength(1);
+    expect(swatches[0].closest('tr').querySelector('th').textContent).toBe('party');
+  });
+
   it('shows epoch-millisecond dates as ISO, without the time at UTC midnight', async () => {
     const columns = {
       ...line(),

@@ -35,8 +35,8 @@ function format(value, date) {
 
 /**
  * The tooltip of a DotGLMark, added to its plot as a Mosaic interactor. It finds the
- * dot under the pointer in what the mark last painted, rings it, and shows its x, y,
- * fill and r next to it. Extra fields are looked up by key, one row at a time, once
+ * dot under the pointer in what the mark last painted, rings it, and shows its group
+ * columns, x, y, fill and r next to it. Extra fields are looked up by key, one row at a time, once
  * the pointer rests, and kept in `mark.tipRows`.
  */
 export class DotGLTip {
@@ -210,15 +210,20 @@ export class DotGLTip {
     };
     const channel = name => mark.channelField(name, { exact: true });
     const value = name => mark.data.columns[channel(name).as][j];
+    const fill = channel('fill');
+    const code = prep.codes[j];
+    const p = style.palette;
+    const color = fill && `rgba(${p[code * 4]}, ${p[code * 4 + 1]}, ${p[code * 4 + 2]}, ${p[code * 4 + 3] / 255})`;
+    // A group column that is also the fill column shows once, as that group's row with the swatch.
+    const fillGroup = fill && mark.groups.find(g => g.name === fill.field.column);
+    // The group columns come first: they say which group the dot is.
+    for (const group of mark.groups) row(group.name, format(mark.data.columns[group.as][j]), group === fillGroup && color);
     for (const name of ['x', 'y']) {
       const cats = prep[`${name}Cats`];
       row(labels[name] ?? channel(name).as, format(cats ? cats[value(name)] : value(name), prep.dates[name]));
     }
-    if (channel('fill')) {
-      const code = prep.codes[j];
-      const p = style.palette;
-      const color = `rgba(${p[code * 4]}, ${p[code * 4 + 1]}, ${p[code * 4 + 2]}, ${p[code * 4 + 3] / 255})`;
-      row(channel('fill').as, prep.continuous ? format(value('fill'), prep.dates.fill) : format(prep.cats[code]), color);
+    if (fill && !fillGroup) {
+      row(fill.as, prep.continuous ? format(value('fill'), prep.dates.fill) : format(prep.cats[code]), color);
     }
     if (channel('r')) row(channel('r').as, format(value('r')));
     const pending = this.shownId != null && !mark.tipRows.has(this.shownId);

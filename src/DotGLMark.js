@@ -11,8 +11,8 @@ import { DotGLTip, KEY_AS } from './tip.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 
-/** Options that are ours. They never become Mosaic channels or Plot options; the mark adds `key` and `orderby` to its query itself. */
-const OWN_OPTIONS = ['painter', 'fallback', 'blit', 'sort', 'orderby', 'maxCategories', 'benchmark', 'fragmentBudget', 'key', 'tip'];
+/** Options that are ours. They never become Mosaic channels or Plot options; the mark adds `key`, `groupby` and `orderby` to its query itself. */
+const OWN_OPTIONS = ['painter', 'fallback', 'blit', 'sort', 'orderby', 'maxCategories', 'benchmark', 'fragmentBudget', 'key', 'groupby', 'tip'];
 
 /** vg.dot options we accept as constants but can't draw. We warn once per mark. */
 const IGNORED_OPTIONS = ['stroke', 'strokeWidth', 'strokeOpacity', 'symbol', 'rotate', 'dx', 'dy', 'title', 'href', 'select', 'frameAnchor'];
@@ -81,6 +81,9 @@ function categorySQL(col, cats) {
  *   Infinity turns it off)
  * - key: an expression for a unique row id, added to the query under a private name
  *   so the tooltip can look up more fields for one row
+ * - groupby: a column name, `column()` or expression, or an array of them, that the query
+ *   groups by, for marks whose x and y are aggregates; a column comes back under its own name
+ *   unless a channel already uses it, and the tooltip shows each one
  * - tip: true, or `{ fields, maxRadius }`, shows a tooltip for the dot under the pointer;
  *   `fields` (an array of column names, or a Param holding one) are looked up by key
  *
@@ -105,8 +108,10 @@ export class DotGLMark extends Mark {
       throw new Error("dotGL: sort must be '-r' or null (use orderby to set the draw order)");
     }
     if (own.tip?.fields && own.key == null) throw new Error('dotGL: tip.fields needs a key column');
+    const groupby = own.groupby == null ? [] : [own.groupby].flat();
     super('dot', source, rest);
     if (own.tip?.fields && this.hasOwnData()) throw new Error('dotGL: tip.fields needs a database table');
+    if (groupby.length && this.hasOwnData()) throw new Error('dotGL: groupby needs a database table');
     for (const c of this.channels) {
       if (c.field && !COLUMN_CHANNELS.includes(c.channel)) {
         throw new Error(`dotGL: the "${c.channel}" option cannot be bound to a column (only x, y, r and fill can)`);
@@ -123,6 +128,18 @@ export class DotGLMark extends Mark {
     this.benchmark = !!own.benchmark;
     this.fragmentBudget = own.fragmentBudget ?? 4e7;
     this.key = own.key ?? null;
+    // A group column comes back under its own name. When a selection filters the mark, Mosaic queries a pre-aggregated
+    // table that has only the query's aliases, and an `orderby` on the column finds it there. An expression, or a name a
+    // column channel, the key or an earlier group already has, gets a private name.
+    const taken = new Set([KEY_AS, ...this.channels.filter(c => c.field).map(c => c.as)].map(n => n.toLowerCase()));
+    /** Group columns: each comes back under the name `as`, and the tooltip labels it `name`. */
+    this.groups = groupby.map((field, i) => {
+      const plain = typeof field === 'string' || isColumnRef(field);
+      const name = isColumnRef(field) ? field.column : String(field);
+      const as = plain && !taken.has(name.toLowerCase()) ? name : `__dotgl_group_${i}`;
+      taken.add(as.toLowerCase());
+      return { field, name, as };
+    });
     this.tip = own.tip ? (own.tip === true ? {} : own.tip) : null;
     /** Extra tooltip fields by key, filled in by the tooltip. */
     this.tipRows = new Map();
@@ -207,13 +224,16 @@ export class DotGLMark extends Mark {
   /**
    * The mark's data query. Column channels come back as numbers the painters can
    * use directly: category codes, doubles, or dates as epoch milliseconds. The key
-   * comes back as it is, under a name Plot never sees.
+   * and the group columns come back as they are, under names Plot never sees.
    */
   query(filter) {
     const q = super.query(filter);
     if (!q) return q;
     if (this.orderby != null) q.orderby(this.orderby);
     if (this.key != null) q.select({ [KEY_AS]: this.key });
+    // GROUP BY names each group's alias. A group alias never matches a channel's alias: when Mosaic combines queries,
+    // it reads GROUP BY "x" next to `avg(price) AS "x"` as the avg expression.
+    for (const { field, as } of this.groups) q.select({ [as]: field }).groupby(as);
     if (this.activePainter() === 'dot') return q;
     for (const name of COLUMN_CHANNELS) {
       const c = this.channelField(name, { exact: true });

@@ -313,6 +313,57 @@ describe('DotGLMark: key and tip', () => {
   });
 });
 
+describe('DotGLMark: groupby', () => {
+  const aggregate = { x: avg('price'), y: count() };
+  const types = { '"party"': 'VARCHAR', 'avg("price")': 'DOUBLE', 'count(*)': 'BIGINT' };
+
+  it('selects a group column under its own name and groups by it, for every painter, without making it a channel', () => {
+    for (const painter of ['rect2d', 'dot']) {
+      for (const groupby of ['region', column('region'), ['region']]) {
+        const mark = new DotGLMark({ table: 'trades' }, { ...aggregate, groupby, painter });
+        expect(mark.channels.map(c => c.channel).sort()).toEqual(['x', 'y']);
+        expect(mark.groups.map(g => [g.name, g.as])).toEqual([['region', 'region']]);
+        expect(String(mark.query())).toBe('SELECT avg("price") AS "x", count(*) AS "y", "region" FROM "trades" AS "source" GROUP BY "region"');
+      }
+    }
+  });
+
+  it('keeps the group column name for an orderby on the same column', () => {
+    // With a filtering selection Mosaic queries a pre-aggregated table that has only the query's aliases.
+    const mark = new DotGLMark({ table: 'trades' }, { ...aggregate, groupby: 'region', orderby: 'region', painter: 'rect2d' });
+    expect(String(mark.query())).toBe('SELECT avg("price") AS "x", count(*) AS "y", "region" FROM "trades" AS "source" GROUP BY "region" ORDER BY "region"');
+  });
+
+  it('groups by each column of an array, and gives an expression a private name labeled with its SQL', () => {
+    const mark = new DotGLMark({ table: 'trades' }, { ...aggregate, groupby: ['region', sql`upper(party)`], painter: 'rect2d' });
+    expect(mark.groups.map(g => [g.name, g.as])).toEqual([['region', 'region'], ['upper(party)', '__dotgl_group_1']]);
+    expect(String(mark.query())).toBe(
+      'SELECT avg("price") AS "x", count(*) AS "y", "region", upper(party) AS "__dotgl_group_1" ' +
+      'FROM "trades" AS "source" GROUP BY "region", "__dotgl_group_1"'
+    );
+  });
+
+  it('adds the groups to the grouping by a text fill, and neither casts nor codes them', async () => {
+    const mark = await prepared({ ...aggregate, fill: 'party', groupby: 'region' }, types, { party: ['R', 'D'] });
+    expect(mark.coordinator.sql.filter(s => s.includes('region'))).toEqual([]);
+    const query = String(mark.query());
+    expect(query).toMatch(/^SELECT "region", coalesce\(\(avg\("price"\)\)::DOUBLE, 'NaN'::DOUBLE\) AS "x", /);
+    expect(query).toMatch(/ END AS UTINYINT\) AS "party" FROM "trades" AS "source" GROUP BY "party", "region"$/);
+  });
+
+  it('keeps channels whose aliases match a group column name', async () => {
+    const mark = await prepared({ ...aggregate, fill: 'party', groupby: ['x', 'party'] }, types, { party: ['R', 'D'] });
+    const query = String(mark.query());
+    expect(query).toMatch(/^SELECT "x" AS "__dotgl_group_0", "party" AS "__dotgl_group_1", coalesce\(\(avg\("price"\)\)::DOUBLE, 'NaN'::DOUBLE\) AS "x", /);
+    expect(query).toContain(`CAST(CASE WHEN "party" IS NULL THEN 255 ELSE COALESCE(enum_code(TRY_CAST(CAST("party" AS VARCHAR) AS ENUM('D', 'R'))), 255) END AS UTINYINT) AS "party"`);
+    expect(query).toMatch(/ GROUP BY "party", "__dotgl_group_0", "__dotgl_group_1"$/);
+  });
+
+  it('throws for array data', () => {
+    expect(() => new DotGLMark(table(10), { x: 'size', y: 'price', groupby: 'party' })).toThrow('dotGL: groupby needs a database table');
+  });
+});
+
 describe('DotGLMark: categories', () => {
   const types = { '"party"': 'VARCHAR', '"price"': 'DOUBLE', '"size"': 'DOUBLE' };
 
