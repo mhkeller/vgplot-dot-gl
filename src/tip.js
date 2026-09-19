@@ -5,10 +5,10 @@ import { buildPickIndex, pickDot } from './pick.js';
 export const KEY_AS = '__dotgl_key';
 
 /** How far outside the dot the ring around it sits. */
-const RING_PAD = 2;
+const RING_PAD = 0;
 
 /** Clear space between that ring and the tooltip, so the two don't crowd the pointer. */
-const TIP_GAP = 12;
+const TIP_GAP = 45;
 
 /** A paint this new doesn't get a pick index yet, so moving the pointer during a wheel zoom builds none. */
 const QUIET_MS = 150;
@@ -42,7 +42,11 @@ const ZONED = new Set(['TIMESTAMPTZ', 'TIMESTAMP WITH TIME ZONE']);
 
 /** The time of day of an epoch time, with a trailing zero seconds or milliseconds left off. */
 function timeOfDay(ms) {
-  return new Date(ms).toISOString().slice(11, 23).replace(/\.000$/, '').replace(/:00$/, '');
+  return new Date(ms)
+    .toISOString()
+    .slice(11, 23)
+    .replace(/\.000$/, '')
+    .replace(/:00$/, '');
 }
 
 /**
@@ -55,7 +59,9 @@ function timeOfDay(ms) {
 function isoStamp(ms, zone, keepTime) {
   const iso = new Date(ms).toISOString();
   const time = timeOfDay(ms);
-  return !keepTime && time === '00:00' ? iso.slice(0, 10) : `${iso.slice(0, 10)}T${time}${zone}`;
+  return !keepTime && time === '00:00'
+    ? iso.slice(0, 10)
+    : `${iso.slice(0, 10)}T${time}${zone}`;
 }
 
 /**
@@ -72,7 +78,8 @@ function format(value, kind, fmt) {
   if (isDate && !Number.isFinite(+value)) return '';
   if (typeof value === 'number' && Number.isNaN(value)) return '';
   // The axis hands a time scale's format a Date, so this does too.
-  if (fmt && value != null) return String(fmt(stamp ? new Date(+value) : value));
+  if (fmt && value != null)
+    return String(fmt(stamp ? new Date(+value) : value));
   if (isDate) {
     const ms = +value;
     if (kind === 'DATE') return new Date(ms).toISOString().slice(0, 10);
@@ -95,7 +102,9 @@ export class DotGLTip {
     this.fields = fields;
     this.maxRadius = maxRadius;
     /** Columns the tip shows from the mark's own data. Extra fields with these names are left out. */
-    this.names = ['x', 'y', 'fill', 'r'].map(name => mark.channelField(name, { exact: true })?.as).filter(Boolean);
+    this.names = ['x', 'y', 'fill', 'r']
+      .map(name => mark.channelField(name, { exact: true })?.as)
+      .filter(Boolean);
     this.svg = null;
     this.index = null;
     this.ring = null;
@@ -135,7 +144,8 @@ export class DotGLTip {
     const el = this.mark.plot.element;
     // A redraw comes with no pointer event, so a pointer still over the plot is picked again from the new paint.
     // A plot taken out of the page and put back hears no leave, so `:hover` confirms the pointer is still there.
-    if (this.over && el.matches(':hover')) this.raf ||= requestAnimationFrame(() => this.update(tips));
+    if (this.over && el.matches(':hover'))
+      this.raf ||= requestAnimationFrame(() => this.update(tips));
     svg.addEventListener('pointermove', e => {
       this.over = !e.buttons;
       if (e.buttons) return this.stop(tips);
@@ -166,7 +176,9 @@ export class DotGLTip {
   /** Picks the dot under the last pointer position in each tip's mark and shows the closest. On a tie the later mark, drawn on top, wins. */
   update(tips) {
     this.raf = 0;
-    const at = new DOMPoint(this.clientX, this.clientY).matrixTransform(this.svg.getScreenCTM().inverse());
+    const at = new DOMPoint(this.clientX, this.clientY).matrixTransform(
+      this.svg.getScreenCTM().inverse(),
+    );
     let best = null;
     let owner = null;
     for (const tip of tips) {
@@ -182,7 +194,12 @@ export class DotGLTip {
         }
         tip.index = buildPickIndex(mark, paint);
       }
-      const hit = pickDot(tip.index, at.x - paint.frame.fx, at.y - paint.frame.fy, tip.maxRadius);
+      const hit = pickDot(
+        tip.index,
+        at.x - paint.frame.fx,
+        at.y - paint.frame.fy,
+        tip.maxRadius,
+      );
       if (hit && (!best || hit.key <= best.key)) {
         best = hit;
         owner = tip;
@@ -221,7 +238,9 @@ export class DotGLTip {
     svg.appendChild(this.ring);
 
     // Fields are read now, so the page can change a Param holding them without rebuilding the plot.
-    const list = Array.isArray(this.fields) ? this.fields : this.fields?.value ?? NO_FIELDS;
+    const list = Array.isArray(this.fields)
+      ? this.fields
+      : (this.fields?.value ?? NO_FIELDS);
     if (list !== this.fieldsFor) {
       mark.tipRows = new Map();
       this.fieldsFor = list;
@@ -245,7 +264,12 @@ export class DotGLTip {
 
   /** Fills the tip with the shown dot's values and places it next to the dot. Extra fields not looked up yet show '…'. */
   draw() {
-    const { mark, svg, tip, shown: { j, px, py, r } } = this;
+    const {
+      mark,
+      svg,
+      tip,
+      shown: { j, px, py, r },
+    } = this;
     const { frame, prep, style, labels, formats = {} } = this.index.paint;
     const doc = tip.ownerDocument;
     const table = doc.createElement('table');
@@ -266,38 +290,73 @@ export class DotGLTip {
     const fill = channel('fill');
     const code = prep.codes[j];
     const p = style.palette;
-    const color = fill && `rgba(${p[code * 4]}, ${p[code * 4 + 1]}, ${p[code * 4 + 2]}, ${p[code * 4 + 3] / 255})`;
+    const color =
+      fill &&
+      `rgba(${p[code * 4]}, ${p[code * 4 + 1]}, ${p[code * 4 + 2]}, ${p[code * 4 + 3] / 255})`;
     // A group column that is also the fill column shows once, as that group's row with the swatch.
-    const fillGroup = fill && mark.groups.find(g => g.name === fill.field.column);
+    const fillGroup =
+      fill && mark.groups.find(g => g.name === fill.field.column);
     // The group columns come first: they say which group the dot is.
-    for (const group of mark.groups) row(group.name, format(mark.data.columns[group.as][j]), group === fillGroup && color);
+    for (const group of mark.groups)
+      row(
+        group.name,
+        format(mark.data.columns[group.as][j]),
+        group === fillGroup && color,
+      );
     for (const name of ['x', 'y']) {
       const cats = prep[`${name}Cats`];
-      row(labels[name] ?? channel(name).as, format(cats ? cats[value(name)] : value(name), prep.dates[name], formats[name]));
+      row(
+        labels[name] ?? channel(name).as,
+        format(
+          cats ? cats[value(name)] : value(name),
+          prep.dates[name],
+          formats[name],
+        ),
+      );
     }
     if (fill && !fillGroup) {
-      row(fill.as, prep.continuous ? format(value('fill'), prep.dates.fill, formats.fill) : format(prep.cats[code], false, formats.fill), color);
+      row(
+        fill.as,
+        prep.continuous
+          ? format(value('fill'), prep.dates.fill, formats.fill)
+          : format(prep.cats[code], false, formats.fill),
+        color,
+      );
     }
     if (channel('r')) row(channel('r').as, format(value('r'), prep.dates.r));
     const pending = this.shownId != null && !mark.tipRows.has(this.shownId);
     const extra = mark.tipRows.get(this.shownId);
-    for (const name of this.extras) row(name, pending ? '…' : format(extra?.[name], this.extraKinds[name]));
+    for (const name of this.extras)
+      row(name, pending ? '…' : format(extra?.[name], this.extraKinds[name]));
     tip.replaceChildren(table);
 
     // Right of the dot, or left of it when there is no room; kept inside the plot element vertically.
     const el = mark.plot.element;
-    if (getComputedStyle(el).position === 'static') el.style.position = 'relative';
+    if (getComputedStyle(el).position === 'static')
+      el.style.position = 'relative';
     tip.style.cssText = 'position:absolute;left:0;top:0';
     el.appendChild(tip);
     const ctm = svg.getScreenCTM();
     const box = el.getBoundingClientRect();
     const gap = r + RING_PAD + TIP_GAP;
-    const rightOf = new DOMPoint(px + frame.fx + gap, py + frame.fy).matrixTransform(ctm);
+    const rightOf = new DOMPoint(
+      px + frame.fx + gap,
+      py + frame.fy,
+    ).matrixTransform(ctm);
     let left = rightOf.x - box.left;
     if (left + tip.offsetWidth > el.clientWidth) {
-      left = new DOMPoint(px + frame.fx - gap, 0).matrixTransform(ctm).x - box.left - tip.offsetWidth;
+      left =
+        new DOMPoint(px + frame.fx - gap, 0).matrixTransform(ctm).x -
+        box.left -
+        tip.offsetWidth;
     }
-    const top = Math.max(0, Math.min(rightOf.y - box.top - tip.offsetHeight / 2, el.clientHeight - tip.offsetHeight));
+    const top = Math.max(
+      0,
+      Math.min(
+        rightOf.y - box.top - tip.offsetHeight / 2,
+        el.clientHeight - tip.offsetHeight,
+      ),
+    );
     tip.style.left = `${left}px`;
     tip.style.top = `${top}px`;
   }
@@ -317,11 +376,17 @@ export class DotGLTip {
     this.busy = true;
     const { mark } = this;
     try {
-      while (this.wanted != null && mark.coordinator && !mark.tipRows.has(this.wanted)) {
+      while (
+        this.wanted != null &&
+        mark.coordinator &&
+        !mark.tipRows.has(this.wanted)
+      ) {
         const id = this.wanted;
         const rows = mark.tipRows;
         const fields = this.fieldsFor;
-        const select = Object.fromEntries(fields.map(name => [name, column(name)]));
+        const select = Object.fromEntries(
+          fields.map(name => [name, column(name)]),
+        );
         const query = Query.from({ source: mark.sourceTable() })
           .select(select)
           .where(eq(mark.key, literal(id)))
@@ -337,17 +402,34 @@ export class DotGLTip {
             const value = child.at(0);
             if (child.type?.typeId !== ARROW_TIME) return value;
             this.extraKinds[name] = 'TIME';
-            return typeof value === 'number' ? value * (TO_MS[child.type.unit] ?? 1) : value;
+            return typeof value === 'number'
+              ? value * (TO_MS[child.type.unit] ?? 1)
+              : value;
           } catch {
             return null;
           }
         };
-        rows.set(id, table.numRows ? Object.fromEntries(Object.keys(select).map((name, k) => [name, read(k, name)])) : null);
+        rows.set(
+          id,
+          table.numRows
+            ? Object.fromEntries(
+                Object.keys(select).map((name, k) => [name, read(k, name)]),
+              )
+            : null,
+        );
         // Skip the redraw when the table, the fields or the painted dots changed while the query ran.
-        if (rows === mark.tipRows && this.shownId === id && mark.lastPaint === this.index?.paint) this.draw();
+        if (
+          rows === mark.tipRows &&
+          this.shownId === id &&
+          mark.lastPaint === this.index?.paint
+        )
+          this.draw();
       }
     } catch (err) {
-      if (!this.warned) console.warn(`dotGL: tooltip fields lookup failed: ${err?.message ?? err}`);
+      if (!this.warned)
+        console.warn(
+          `dotGL: tooltip fields lookup failed: ${err?.message ?? err}`,
+        );
       this.warned = true;
     } finally {
       this.busy = false;
