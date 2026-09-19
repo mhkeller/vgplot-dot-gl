@@ -12,7 +12,13 @@ import { DotGLTip, KEY_AS } from './tip.js';
 const SVG = 'http://www.w3.org/2000/svg';
 
 /** Options that are ours. They never become Mosaic channels or Plot options; the mark adds `key`, `groupby` and `orderby` to its query itself. */
-const OWN_OPTIONS = ['painter', 'fallback', 'blit', 'sort', 'orderby', 'maxCategories', 'benchmark', 'fragmentBudget', 'key', 'groupby', 'tip'];
+const OWN_OPTIONS = ['blit', 'sort', 'orderby', 'maxCategories', 'benchmark', 'fragmentBudget', 'key', 'groupby', 'tip'];
+
+/** Options that used to exist. Without this they would be read as column names, and the error would not say why. */
+const REMOVED_OPTIONS = {
+  painter: 'dotGL always draws with WebGL2 now, and falls back to a plain canvas on its own',
+  fallback: 'dotGL always draws with WebGL2 now, and falls back to a plain canvas on its own'
+};
 
 /** vg.dot options we accept as constants but can't draw. We warn once per mark. */
 const IGNORED_OPTIONS = ['stroke', 'strokeWidth', 'strokeOpacity', 'symbol', 'rotate', 'dx', 'dy', 'title', 'href', 'select', 'frameAnchor'];
@@ -38,7 +44,7 @@ const ascendingDefined = (a, b) => (a == null) - (b == null) || (a < b ? -1 : a 
 /** A number as a DOUBLE, with NaN for null, so the column arrives as a Float64Array. (`literal(NaN)` would print NULL.) */
 const asDouble = e => coalesce(float64(e), verbatim("'NaN'::DOUBLE"));
 
-/** How long you have to stop zooming before a lower-resolution frame is redrawn sharp. */
+/** How long the plot has to hold still before a lower-resolution frame is drawn again at full resolution. */
 const REFINE_DELAY_MS = 150;
 
 /**
@@ -67,9 +73,11 @@ function categorySQL(col, cats) {
  * from those. The mark then draws the real rows into a canvas placed inside the
  * plot's SVG.
  *
+ * WebGL2 does the drawing. On the rare browser without it the mark falls back on
+ * its own to plain canvas squares, which is also how the tests draw, since jsdom
+ * has no graphics card.
+ *
  * Options are the ones vg.dot has for x, y, r, fill, opacity and clip, plus:
- * - painter: 'gl' (default), 'rect2d' (plain canvas), or 'dot' (the original SVG dots)
- * - fallback: what to use when the browser has no WebGL2 ('rect2d' default, or 'dot')
  * - blit: 'drawImage' (default) or 'bitmaprenderer', how the picture is copied into the plot
  * - sort: '-r' (default, big dots first when r is a column) or null
  * - orderby: what the query sorts rows by (a column name, `column()`, `desc()` or a `sql` fragment);
@@ -77,7 +85,7 @@ function categorySQL(col, cats) {
  * - maxCategories: how many different fill values a database column may have (65,535 at most; array data allows 254)
  * - benchmark: true waits for the graphics card after each draw so the timings are real
  * - fragmentBudget: how much painting one frame may do before the mark draws at a
- *   lower resolution while you zoom and repaints sharp once you stop (default 4e7;
+ *   lower resolution while you zoom and draws again at full resolution once you stop (default 4e7;
  *   Infinity turns it off)
  * - key: an expression for a unique row id, added to the query under a private name
  *   so the tooltip can look up more fields for one row
@@ -104,6 +112,9 @@ export class DotGLMark extends Mark {
     if (rest.fx != null || rest.fy != null) {
       throw new Error('dotGL: faceting (fx/fy) is not supported');
     }
+    for (const name in REMOVED_OPTIONS) {
+      if (name in options) throw new Error(`dotGL: the "${name}" option was removed. ${REMOVED_OPTIONS[name]}.`);
+    }
     if (own.sort !== undefined && own.sort !== null && own.sort !== '-r') {
       throw new Error("dotGL: sort must be '-r' or null (use orderby to set the draw order)");
     }
@@ -119,8 +130,6 @@ export class DotGLMark extends Mark {
     }
     const ignored = IGNORED_OPTIONS.filter(name => this.channel(name));
     if (ignored.length) console.warn(`dotGL: ignoring unsupported option(s) ${ignored.join(', ')}`);
-    this.painter = own.painter ?? 'gl';
-    this.fallback = own.fallback ?? 'rect2d';
     this.blit = own.blit ?? 'drawImage';
     this.sortMode = own.sort === undefined ? '-r' : own.sort;
     this.orderby = own.orderby ?? null;
@@ -174,7 +183,7 @@ export class DotGLMark extends Mark {
     // A result for the old query can still arrive while this waits. It is read with the old lists, which its
     // codes point into, so the new lists replace them only once they are complete.
     const categories = new Map();
-    if (this.hasOwnData() || !this.coordinator || this.activePainter() === 'dot') {
+    if (this.hasOwnData() || !this.coordinator) {
       this.categories = categories;
       return;
     }
@@ -234,7 +243,6 @@ export class DotGLMark extends Mark {
     // GROUP BY names each group's alias. A group alias never matches a channel's alias: when Mosaic combines queries,
     // it reads GROUP BY "x" next to `avg(price) AS "x"` as the avg expression.
     for (const { field, as } of this.groups) q.select({ [as]: field }).groupby(as);
-    if (this.activePainter() === 'dot') return q;
     for (const name of COLUMN_CHANNELS) {
       const c = this.channelField(name, { exact: true });
       if (!c || this.isUnnested(c.field)) continue;
@@ -273,11 +281,9 @@ export class DotGLMark extends Mark {
     return c && Object.hasOwn(c, 'value') ? c.value : undefined;
   }
 
-  /** Which painter draws this time: 'gl', 'rect2d' or 'dot'. */
+  /** Which painter draws this time. WebGL2 when the browser has it, plain canvas squares when it doesn't. */
   activePainter() {
-    if (this.painter === 'gl' && getSharedGL(this.blit)) return 'gl';
-    if (this.painter === 'gl') return this.fallback;
-    return this.painter;
+    return getSharedGL(this.blit) ? 'gl' : 'rect2d';
   }
 
   prepareData() {
@@ -287,9 +293,22 @@ export class DotGLMark extends Mark {
     const column = name => (field(name) ? columns[field(name).as] : null);
     const cats = name => (field(name) ? this.categories.get(field(name).as)?.cats ?? null : null);
     const type = name => field(name)?.type;
+    // The SQL type for a date column, so the tooltip can tell a date from a timestamp from a time.
+    // Array data has no field info, so `prepare` falls back to looking for Date objects.
+    const dateType = name => (type(name) === 'date' ? field(name).sqlType || true : false);
     const x = column('x');
     const y = column('y');
     if (!x || !y) throw new Error('dotGL: x and y must be columns');
+    // With array data nothing has looked at the values yet. A text x or y would read as NaN
+    // and every row would be dropped, leaving an empty plot and no reason for it.
+    if (this.hasOwnData()) {
+      for (const name of ['x', 'y']) {
+        const first = column(name).find(v => v != null);
+        if (first != null && typeof first !== 'number' && !(first instanceof Date)) {
+          throw new Error(`dotGL: the ${name} values are ${typeof first}; array data draws numbers and dates only, so read this column from a database table to plot it as categories`);
+        }
+      }
+    }
     const r = column('r');
     const fillCats = cats('fill');
     return prepare({
@@ -301,7 +320,7 @@ export class DotGLMark extends Mark {
       yCats: cats('y'),
       fillCats,
       continuous: !fillCats && (type('fill') === 'number' || type('fill') === 'date'),
-      dates: { x: type('x') === 'date', y: type('y') === 'date', fill: type('fill') === 'date' },
+      dates: { x: dateType('x'), y: dateType('y'), r: dateType('r'), fill: dateType('fill') },
       sort: this.sortMode,
       maxCategories: this.maxCategories,
       wantP25: !!r && this.plot?.getAttribute('rRange') == null
@@ -310,12 +329,6 @@ export class DotGLMark extends Mark {
 
   plotSpecs() {
     if (!this.data || this.destroyed) return [];
-    if (this.activePainter() === 'dot') {
-      // SVG dots get Plot's own tooltip, which shows x, y, fill and r.
-      const specs = super.plotSpecs();
-      if (this.tip) specs[0].options.tip = true;
-      return specs;
-    }
     const prep = (this.prep ??= this.prepareData());
     const options = { sort: null, render: this.render };
     for (const c of this.channels) {
@@ -381,6 +394,7 @@ export class DotGLMark extends Mark {
 
     // Plot's dot would draw hollow rings in the text color. This mark always fills.
     const fill = this.constant('fill') ?? 'currentColor';
+    const missingColors = [];
     const style = {
       opacity: +(this.constant('opacity') ?? 1) * +(this.constant('fillOpacity') ?? 1),
       fill,
@@ -388,13 +402,26 @@ export class DotGLMark extends Mark {
       r: +(this.constant('r') ?? 3),
       palette: !values.fill ? null
         : prep.continuous ? paletteFromScale(scales.scales.color, prep.extent.fill, prep.levels)
-        : paletteFromValues(values.fill, prep.cats.length)
+        : paletteFromValues(values.fill, prep.cats.length, missingColors)
     };
+    this.warnMissingColors(missingColors, prep.cats);
 
     clearTimeout(this.refineTimer);
     const painter = this.activePainter();
     // Everything the tooltip needs to find the dots on screen again, and when they were painted.
-    const params = { sx, sy, sr, lines, frame, style, prep, painter, labels: { x: scales.x?.label, y: scales.y?.label }, at: performance.now() };
+    // A tick format the page set for an axis. Only a function is used: turning a d3 format
+    // string into a function would need d3-time-format, which this package does not depend on,
+    // so a string falls through to the tooltip's own formatting instead of throwing.
+    const tickFormat = name => {
+      const f = this.plot?.getAttribute?.(`${name}TickFormat`);
+      return typeof f === 'function' ? f : null;
+    };
+    const params = {
+      sx, sy, sr, lines, frame, style, prep, painter,
+      labels: { x: scales.x?.label, y: scales.y?.label },
+      formats: { x: tickFormat('x'), y: tickFormat('y'), fill: tickFormat('color') },
+      at: performance.now()
+    };
     this.stats = painter === 'gl' ? paintGL(this, canvas, params, { allowReduce: true }) : paintRect2D(this, canvas, params);
     this.lastPaint = this.stats.skipped ? null : params;
     if (this.stats.reduced) this.refineTimer = setTimeout(() => this.refine(params), REFINE_DELAY_MS);
@@ -410,11 +437,28 @@ export class DotGLMark extends Mark {
     return g;
   }
 
-  /** Redraw the last frame sharp once zooming has stopped. */
+  /**
+   * Says once when the color domain has no color for some of the fill column's values.
+   * Those dots are drawn fully transparent, so without this they just aren't there.
+   */
+  warnMissingColors(missing, cats) {
+    if (this.warnedColors || !missing.length) return;
+    this.warnedColors = true;
+    const names = missing.slice(0, 5).map(i => JSON.stringify(cats[i])).join(', ');
+    const rest = missing.length > 5 ? `, and ${missing.length - 5} more` : '';
+    console.warn(`dotGL: the color domain has no color for ${missing.length} of the fill column's values (${names}${rest}), so those dots are drawn invisible`);
+  }
+
+  /** Draw the last frame again at full resolution, once zooming has stopped. */
   refine(params) {
     if (this.destroyed || this.lastPaint !== params || this.prep !== params.prep || !this.canvas) return;
-    this.stats = { ...paintGL(this, this.canvas, params), refined: true };
-    // Tell the page the sharp frame is on screen (the demo shows its timings).
+    if (params.painter !== 'gl') return;
+    const stats = paintGL(this, this.canvas, params);
+    // The context went away while the timer waited. Nothing was drawn, so leave the last
+    // real stats alone and say nothing; the restore handler redraws the plot.
+    if (stats.skipped) return;
+    this.stats = { ...stats, refined: true };
+    // Tell the page the full-resolution frame is on screen (the demo shows its timings).
     this.plot?.element?.dispatchEvent(new CustomEvent('dotgl-refine', { detail: { mark: this, stats: this.stats } }));
   }
 

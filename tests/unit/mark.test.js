@@ -48,7 +48,7 @@ function stubCoordinator(types, distinct = {}) {
 
 /** A database-backed mark after prepare(), with a stub coordinator. */
 async function prepared(options, types, distinct) {
-  const mark = new DotGLMark({ table: 'trades' }, { painter: 'rect2d', ...options });
+  const mark = new DotGLMark({ table: 'trades' }, { ...options });
   mark.coordinator = stubCoordinator(types, distinct);
   await mark.prepare();
   return mark;
@@ -60,7 +60,7 @@ describe('DotGLMark', () => {
   const data = table(3000);
 
   it('separates its own options from the channels sent to SQL/Plot', () => {
-    const mark = new DotGLMark(data, { x: 'size', y: 'price', fill: 'party', r: 2.5, opacity: 0.6, clip: true, sort: null, orderby: 'volume', blit: 'bitmaprenderer', painter: 'rect2d' });
+    const mark = new DotGLMark(data, { x: 'size', y: 'price', fill: 'party', r: 2.5, opacity: 0.6, clip: true, sort: null, orderby: 'volume', blit: 'bitmaprenderer' });
     expect(mark.channels.map(c => c.channel).sort()).toEqual(['clip', 'fill', 'opacity', 'r', 'x', 'y']);
     expect(mark.sortMode).toBeNull();
     expect(mark.orderby).toBe('volume');
@@ -70,12 +70,12 @@ describe('DotGLMark', () => {
 
   it('throws when the mark is made with fx/fy, or with a column for an option it cannot draw', () => {
     expect(() => new DotGLMark(data, { x: 'size', y: 'price', fx: 'party' })).toThrow(/facet/);
-    expect(() => new DotGLMark(data, { x: 'size', y: 'price', stroke: 'party', painter: 'rect2d' })).toThrow(/stroke/);
-    expect(() => new DotGLMark(data, { x: 'size', y: 'price', symbol: 'party', painter: 'rect2d' })).toThrow(/symbol/);
+    expect(() => new DotGLMark(data, { x: 'size', y: 'price', stroke: 'party' })).toThrow(/stroke/);
+    expect(() => new DotGLMark(data, { x: 'size', y: 'price', symbol: 'party' })).toThrow(/symbol/);
   });
 
   it('emits one dot spec with short hint arrays instead of the full columns', () => {
-    const mark = stubbed(new DotGLMark(data, { x: 'size', y: 'price', r: 'volume', fill: 'party', opacity: 0.6, clip: true, painter: 'rect2d' }));
+    const mark = stubbed(new DotGLMark(data, { x: 'size', y: 'price', r: 'volume', fill: 'party', opacity: 0.6, clip: true }));
     const specs = mark.plotSpecs();
     expect(specs).toHaveLength(1);
     const [{ type, data: d, options }] = specs;
@@ -90,13 +90,6 @@ describe('DotGLMark', () => {
     expect(mark.data.columns.size.length).toBe(3000);
   });
 
-  it('falls back to ordinary SVG dots when asked', () => {
-    const mark = new DotGLMark(data, { x: 'size', y: 'price', painter: 'dot' });
-    const [{ options }] = mark.plotSpecs();
-    expect(options.x.length).toBe(3000);
-    expect(options.render).toBeUndefined();
-  });
-
   it('makes Plot infer the same scales as the full columns', () => {
     const X = data.map(d => d.size), Y = data.map(d => d.price), R = data.map(d => d.volume), F = data.map(d => d.party);
     const full = Plot.plot({
@@ -104,7 +97,7 @@ describe('DotGLMark', () => {
       x: { type: 'log' },
       marks: [Plot.dot({ length: X.length }, { x: X, y: Y, r: R, fill: { value: F, scale: 'color' } })]
     });
-    const mark = stubbed(new DotGLMark(data, { x: 'size', y: 'price', r: 'volume', fill: 'party', painter: 'rect2d' }));
+    const mark = stubbed(new DotGLMark(data, { x: 'size', y: 'price', r: 'volume', fill: 'party' }));
     const [{ data: d, options }] = mark.plotSpecs();
     const hinted = Plot.plot({ document, width: 640, height: 400, x: { type: 'log' }, marks: [Plot.dot(d, options)] });
     for (const name of ['x', 'y', 'color']) {
@@ -122,7 +115,7 @@ describe('DotGLMark', () => {
   });
 
   it('gives render the finished scales and the colors Plot chose for the hint rows', () => {
-    const mark = new DotGLMark(data, { x: 'size', y: 'price', fill: 'party', painter: 'rect2d' });
+    const mark = new DotGLMark(data, { x: 'size', y: 'price', fill: 'party' });
     let seen;
     mark.render = (index, scales, values) => {
       seen = { scales, values };
@@ -135,7 +128,7 @@ describe('DotGLMark', () => {
   });
 
   it('survives destroy and renders nothing afterwards', () => {
-    const mark = new DotGLMark(data, { x: 'size', y: 'price', painter: 'rect2d' });
+    const mark = new DotGLMark(data, { x: 'size', y: 'price' });
     mark.plotSpecs();
     mark.destroy();
     expect(mark.destroyed).toBe(true);
@@ -147,7 +140,7 @@ describe('DotGLMark', () => {
 describe('DotGLMark: review fixes', () => {
   it('draws a visible default color when no fill is given', () => {
     const data = table(50);
-    const mark = new DotGLMark(data, { x: 'size', y: 'price', painter: 'rect2d' });
+    const mark = new DotGLMark(data, { x: 'size', y: 'price' });
     let style;
     const origPaint = mark.render;
     mark.render = (index, scales, values, dims, context) => {
@@ -166,7 +159,7 @@ describe('DotGLMark: review fixes', () => {
     const rows = Array.from({ length: 200 }, (_, i) => ({ size: i === 0 ? 0 : i, price: i + 1, party: 'D' }));
     const X = rows.map(d => d.size), Y = rows.map(d => d.price);
     const full = Plot.plot({ document, width: 640, height: 400, x: { type: 'log' }, marks: [Plot.dot({ length: X.length }, { x: X, y: Y })] });
-    const mark = stubbed(new DotGLMark(rows, { x: 'size', y: 'price', painter: 'rect2d' }));
+    const mark = stubbed(new DotGLMark(rows, { x: 'size', y: 'price' }));
     const [{ data: d, options }] = mark.plotSpecs();
     const hinted = Plot.plot({ document, width: 640, height: 400, x: { type: 'log' }, marks: [Plot.dot(d, options)] });
     expect(hinted.scale('x').domain).toEqual(full.scale('x').domain);
@@ -179,7 +172,7 @@ describe('DotGLMark: review fixes', () => {
 describe('DotGLMark: more review fixes', () => {
   it('ignores an r scale created by another mark when its own r is constant', () => {
     const rows = table(300);
-    const mark = new DotGLMark(rows, { x: 'size', y: 'price', r: 2.5, fill: 'party', painter: 'rect2d' });
+    const mark = new DotGLMark(rows, { x: 'size', y: 'price', r: 2.5, fill: 'party' });
     let seenR;
     mark.render = (index, scales) => {
       seenR = mark.channelField('r', { exact: true }) ? scales.scales.r : undefined;
@@ -193,7 +186,7 @@ describe('DotGLMark: more review fixes', () => {
 
   it('hints undefined for a column with no finite value so Plot behaves like an empty vg.dot', () => {
     const rows = [{ size: 1, price: null, party: 'D' }, { size: 2, price: null, party: 'D' }];
-    const mark = stubbed(new DotGLMark(rows, { x: 'size', y: 'price', painter: 'rect2d' }));
+    const mark = stubbed(new DotGLMark(rows, { x: 'size', y: 'price' }));
     const [{ data: d, options }] = mark.plotSpecs();
     expect(options.y.every(v => v === undefined)).toBe(true);
     const fig = Plot.plot({ document, width: 640, height: 400, y: { type: 'log' }, marks: [Plot.dot(d, options)] });
@@ -206,7 +199,7 @@ describe('DotGLMark: more review fixes', () => {
     const orig = console.warn;
     console.warn = m => warnings.push(m);
     try {
-      const mark = stubbed(new DotGLMark(table(20), { x: 'size', y: 'price', stroke: 'red', symbol: 'square', painter: 'rect2d' }));
+      const mark = stubbed(new DotGLMark(table(20), { x: 'size', y: 'price', stroke: 'red', symbol: 'square' }));
       mark.plotSpecs();
       mark.plotSpecs();
     } finally {
@@ -217,7 +210,7 @@ describe('DotGLMark: more review fixes', () => {
   });
 
   it('folds fillOpacity into the painted opacity and drops data on destroy', () => {
-    const mark = new DotGLMark(table(20), { x: 'size', y: 'price', opacity: 0.5, fillOpacity: 0.5, painter: 'rect2d' });
+    const mark = new DotGLMark(table(20), { x: 'size', y: 'price', opacity: 0.5, fillOpacity: 0.5 });
     expect(mark.constant('opacity') * mark.constant('fillOpacity')).toBe(0.25);
     mark.plotSpecs();
     mark.destroy();
@@ -234,7 +227,7 @@ describe('DotGLMark: fill modes', () => {
       { size: 2, price: 2, party: 0 },
       { size: 3, price: 3, party: 255 }
     ];
-    const mark = stubbed(new DotGLMark(rows, { x: 'size', y: 'price', fill: 'party', painter: 'rect2d' }));
+    const mark = stubbed(new DotGLMark(rows, { x: 'size', y: 'price', fill: 'party' }));
     // What prepare() would have produced for the categories ['D', 'R'].
     mark.categories.set('party', { cats: ['D', 'R'] });
     const [{ data: d, options }] = mark.plotSpecs();
@@ -246,7 +239,7 @@ describe('DotGLMark: fill modes', () => {
 
   it('bins a numeric fill and lets Plot build a continuous color scale with a ramp legend', () => {
     const rows = Array.from({ length: 300 }, (_, i) => ({ size: i + 1, price: i, shift: (i / 299) * 2 - 1 }));
-    const mark = stubbed(new DotGLMark(rows, { x: 'size', y: 'price', fill: 'shift', painter: 'rect2d' }));
+    const mark = stubbed(new DotGLMark(rows, { x: 'size', y: 'price', fill: 'shift' }));
     // What prepare() reads from Mosaic's field info.
     mark.channelField('fill').type = 'number';
     const [{ data: d, options }] = mark.plotSpecs();
@@ -262,7 +255,7 @@ describe('DotGLMark: fill modes', () => {
   });
 
   it('groups plain values into categories for array data', async () => {
-    const mark = new DotGLMark(table(10), { x: 'size', y: 'price', fill: 'party', painter: 'rect2d' });
+    const mark = new DotGLMark(table(10), { x: 'size', y: 'price', fill: 'party' });
     await mark.prepare();
     expect(mark.categories.size).toBe(0);
     mark.plotSpecs();
@@ -272,12 +265,12 @@ describe('DotGLMark: fill modes', () => {
 
 describe('DotGLMark: orderby and sort', () => {
   it('adds orderby to the query without making it a channel', () => {
-    const byColumn = new DotGLMark({ table: 'trades' }, { x: 'size', y: 'price', orderby: 'volume', painter: 'rect2d' });
+    const byColumn = new DotGLMark({ table: 'trades' }, { x: 'size', y: 'price', orderby: 'volume' });
     expect(byColumn.channels.map(c => c.channel)).not.toContain('orderby');
     expect(String(byColumn.query())).toBe('SELECT "size", "price" FROM "trades" AS "source" ORDER BY "volume"');
-    const byFragment = new DotGLMark({ table: 'trades' }, { x: 'size', y: 'price', orderby: sql`${column('volume')} DESC`, painter: 'rect2d' });
+    const byFragment = new DotGLMark({ table: 'trades' }, { x: 'size', y: 'price', orderby: sql`${column('volume')} DESC` });
     expect(String(byFragment.query())).toMatch(/ ORDER BY "volume" DESC$/);
-    const byDesc = new DotGLMark({ table: 'trades' }, { x: 'size', y: 'price', orderby: desc('volume'), painter: 'rect2d' });
+    const byDesc = new DotGLMark({ table: 'trades' }, { x: 'size', y: 'price', orderby: desc('volume') });
     expect(String(byDesc.query())).toMatch(/ ORDER BY "volume" DESC$/);
   });
 
@@ -291,12 +284,10 @@ describe('DotGLMark: orderby and sort', () => {
 });
 
 describe('DotGLMark: key and tip', () => {
-  it('selects the key under its own name, for every painter, without making key or tip a channel', () => {
-    for (const painter of ['rect2d', 'dot']) {
-      const mark = new DotGLMark({ table: 'trades' }, { x: 'size', y: 'price', key: 'id', tip: { fields: ['party'] }, orderby: 'volume', painter });
-      expect(mark.channels.map(c => c.channel).sort()).toEqual(['x', 'y']);
-      expect(String(mark.query())).toBe('SELECT "size", "price", "id" AS "__dotgl_key" FROM "trades" AS "source" ORDER BY "volume"');
-    }
+  it('selects the key under its own name, without making key or tip a channel', () => {
+    const mark = new DotGLMark({ table: 'trades' }, { x: 'size', y: 'price', key: 'id', tip: { fields: ['party'] }, orderby: 'volume' });
+    expect(mark.channels.map(c => c.channel).sort()).toEqual(['x', 'y']);
+    expect(String(mark.query())).toBe('SELECT "size", "price", "id" AS "__dotgl_key" FROM "trades" AS "source" ORDER BY "volume"');
   });
 
   it('throws for tip fields without a key or a database table', () => {
@@ -305,37 +296,29 @@ describe('DotGLMark: key and tip', () => {
     expect(() => new DotGLMark({ table: 'trades' }, { x: 'size', y: 'price', tip: true })).not.toThrow();
   });
 
-  it("gives the 'dot' painter Plot's own tip", () => {
-    const [{ options }] = new DotGLMark(table(10), { x: 'size', y: 'price', tip: true, painter: 'dot' }).plotSpecs();
-    expect(options.tip).toBe(true);
-    const [{ options: plain }] = new DotGLMark(table(10), { x: 'size', y: 'price', painter: 'dot' }).plotSpecs();
-    expect(plain.tip).toBeUndefined();
-  });
 });
 
 describe('DotGLMark: groupby', () => {
   const aggregate = { x: avg('price'), y: count() };
   const types = { '"party"': 'VARCHAR', 'avg("price")': 'DOUBLE', 'count(*)': 'BIGINT' };
 
-  it('selects a group column under its own name and groups by it, for every painter, without making it a channel', () => {
-    for (const painter of ['rect2d', 'dot']) {
-      for (const groupby of ['region', column('region'), ['region']]) {
-        const mark = new DotGLMark({ table: 'trades' }, { ...aggregate, groupby, painter });
-        expect(mark.channels.map(c => c.channel).sort()).toEqual(['x', 'y']);
-        expect(mark.groups.map(g => [g.name, g.as])).toEqual([['region', 'region']]);
-        expect(String(mark.query())).toBe('SELECT avg("price") AS "x", count(*) AS "y", "region" FROM "trades" AS "source" GROUP BY "region"');
-      }
+  it('selects a group column under its own name and groups by it, without making it a channel', () => {
+    for (const groupby of ['region', column('region'), ['region']]) {
+      const mark = new DotGLMark({ table: 'trades' }, { ...aggregate, groupby });
+      expect(mark.channels.map(c => c.channel).sort()).toEqual(['x', 'y']);
+      expect(mark.groups.map(g => [g.name, g.as])).toEqual([['region', 'region']]);
+      expect(String(mark.query())).toBe('SELECT avg("price") AS "x", count(*) AS "y", "region" FROM "trades" AS "source" GROUP BY "region"');
     }
   });
 
   it('keeps the group column name for an orderby on the same column', () => {
     // With a filtering selection Mosaic queries a pre-aggregated table that has only the query's aliases.
-    const mark = new DotGLMark({ table: 'trades' }, { ...aggregate, groupby: 'region', orderby: 'region', painter: 'rect2d' });
+    const mark = new DotGLMark({ table: 'trades' }, { ...aggregate, groupby: 'region', orderby: 'region' });
     expect(String(mark.query())).toBe('SELECT avg("price") AS "x", count(*) AS "y", "region" FROM "trades" AS "source" GROUP BY "region" ORDER BY "region"');
   });
 
   it('groups by each column of an array, and gives an expression a private name labeled with its SQL', () => {
-    const mark = new DotGLMark({ table: 'trades' }, { ...aggregate, groupby: ['region', sql`upper(party)`], painter: 'rect2d' });
+    const mark = new DotGLMark({ table: 'trades' }, { ...aggregate, groupby: ['region', sql`upper(party)`] });
     expect(mark.groups.map(g => [g.name, g.as])).toEqual([['region', 'region'], ['upper(party)', '__dotgl_group_1']]);
     expect(String(mark.query())).toBe(
       'SELECT avg("price") AS "x", count(*) AS "y", "region", upper(party) AS "__dotgl_group_1" ' +
@@ -461,12 +444,14 @@ describe('DotGLMark: categories', () => {
     await again;
   });
 
-  it("fetches no categories when a 'gl' mark falls back to SVG dots", async () => {
+  it('falls back to the canvas painter when the browser has no WebGL2', async () => {
     const noWebGL = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
     try {
-      const mark = await prepared({ x: 'size', y: 'price', fill: sql`upper(party)`, painter: 'gl', fallback: 'dot' }, { ...types, 'upper(party)': 'VARCHAR' });
-      expect(mark.activePainter()).toBe('dot');
-      expect(distinctSQL(mark)).toEqual([]);
+      const mark = await prepared({ x: 'size', y: 'price', fill: 'party' }, types, { party: ['D', 'R'] });
+      expect(mark.activePainter()).toBe('rect2d');
+      // The fallback draws the same rows the same way, so it still fetches the category list.
+      expect(distinctSQL(mark).length).toBe(1);
+      expect(mark.categories.get('party').cats).toEqual(['D', 'R']);
     } finally {
       noWebGL.mockRestore();
     }
@@ -509,7 +494,7 @@ describe('DotGLMark: drawing', () => {
     // jsdom has no 2D canvas, so record the squares the rect2d painter fills.
     const squares = [];
     const ctx = { setTransform() {}, clearRect() {}, fillRect(x, y, w, h) { squares.push({ x: x + w / 2, y: y + h / 2, fill: this.fillStyle }); } };
-    const canvas2d = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx);
+    const canvas2d = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(type => (type === '2d' ? ctx : null));
     try {
       const [{ data: d, options }] = mark.plotSpecs();
       Plot.plot({ document, width: 640, height: 400, marks: [Plot.dot(d, options)] });
@@ -533,7 +518,7 @@ describe('DotGLMark: drawing', () => {
   it('throws when a number column sits on a point or band scale', () => {
     const rows = [{ year: 2000, price: 1 }, { year: 2005, price: 2 }];
     for (const type of ['point', 'band']) {
-      const mark = new DotGLMark(rows, { x: 'year', y: 'price', painter: 'rect2d' });
+      const mark = new DotGLMark(rows, { x: 'year', y: 'price' });
       const [{ data: d, options }] = mark.plotSpecs();
       expect(() => Plot.plot({ document, x: { type }, marks: [Plot.dot(d, options)] }))
         .toThrow(`dotGL: the x scale type "${type}" is not supported for a number or date column`);
@@ -553,16 +538,10 @@ describe('DotGLMark: number and date columns', () => {
   });
 
   it('leaves unnested columns as Mosaic selects them', async () => {
-    const mark = new DotGLMark({ table: 'trades', options: { unnest: 'sizes' } }, { x: 'sizes', y: 'volume', painter: 'rect2d' });
+    const mark = new DotGLMark({ table: 'trades', options: { unnest: 'sizes' } }, { x: 'sizes', y: 'volume' });
     mark.coordinator = stubCoordinator({ ...types, '"sizes"': 'DOUBLE[]' });
     await mark.prepare();
     expect(String(mark.query())).toBe(`SELECT UNNEST("sizes") AS "sizes", coalesce(("volume")::DOUBLE, 'NaN'::DOUBLE) AS "volume" FROM "trades" AS "source"`);
-  });
-
-  it("rewrites nothing and fetches no categories with painter: 'dot'", async () => {
-    const mark = await prepared({ x: 'size', y: 'day', fill: 'party', painter: 'dot' }, types, { party: ['D'] });
-    expect(distinctSQL(mark)).toEqual([]);
-    expect(String(mark.query())).toBe('SELECT "size", "day", "party" FROM "trades" AS "source"');
   });
 
   it('turns epoch-millisecond date columns back into Date hints, and a date fill into a time color scale', async () => {
@@ -583,7 +562,7 @@ describe('DotGLMark: number and date columns', () => {
 
 describe('DotGLMark: queryResult', () => {
   it('keeps the prepared rows when Mosaic hands back the same result, and clears them for a new one', () => {
-    const mark = stubbed(new DotGLMark({ table: 'trades' }, { x: 'size', y: 'price', painter: 'rect2d' }));
+    const mark = stubbed(new DotGLMark({ table: 'trades' }, { x: 'size', y: 'price' }));
     const result = [{ size: 1, price: 2 }, { size: 3, price: 4 }];
     mark.queryResult(result);
     mark.plotSpecs();
@@ -604,5 +583,55 @@ describe('DotGLMark: queryResult', () => {
     mark.queryResult([{ size: 1, price: 2 }]);
     mark.update();
     expect(mark.plot.update).toHaveBeenCalledWith(mark);
+  });
+});
+
+describe('DotGLMark: removed options', () => {
+  it('says so plainly instead of reading painter as a column name', () => {
+    for (const name of ['painter', 'fallback']) {
+      expect(() => new DotGLMark({ table: 'trades' }, { x: 'size', y: 'price', [name]: 'gl' }))
+        .toThrow(`dotGL: the "${name}" option was removed.`);
+    }
+  });
+});
+
+describe('DotGLMark: telling you when nothing will show up', () => {
+  it('throws for a text x or y with array data, rather than drawing an empty plot', () => {
+    // Every value would read as NaN and every row would be dropped, with nothing said.
+    const rows = table(20);
+    expect(() => stubbed(new DotGLMark(rows, { x: 'party', y: 'price' })).plotSpecs())
+      .toThrow(/the x values are string.*database table/s);
+    expect(() => stubbed(new DotGLMark(rows, { x: 'size', y: 'party' })).plotSpecs())
+      .toThrow(/the y values are string/);
+    // Dates and numbers are both fine, and so is a text fill, which is grouped into categories here.
+    const dated = rows.map((d, i) => ({ ...d, day: new Date(Date.UTC(2021, 0, 1 + i)) }));
+    expect(() => stubbed(new DotGLMark(dated, { x: 'day', y: 'price', fill: 'party' })).plotSpecs()).not.toThrow();
+  });
+
+  it('warns once when the color domain leaves a category out, since those dots are invisible', () => {
+    const warnings = [];
+    const orig = console.warn;
+    console.warn = m => warnings.push(m);
+    try {
+      const rows = table(60);
+      const mark = new DotGLMark(rows, { x: 'size', y: 'price', fill: 'party' });
+      const [{ data: d, options }] = mark.plotSpecs();
+      // 'I' is left out, so Plot gives it no color and its dots are drawn fully transparent.
+      const spec = { document, width: 320, height: 200, color: { domain: ['R', 'D'], range: ['red', 'blue'] }, marks: [Plot.dot(d, options)] };
+      // jsdom has no canvas, so the painter gets one that does nothing.
+      const ctx = { setTransform() {}, clearRect() {}, fillRect() {} };
+      const canvas2d = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(t => (t === '2d' ? ctx : null));
+      try {
+        Plot.plot(spec);
+        Plot.plot(spec);
+      } finally {
+        canvas2d.mockRestore();
+      }
+    } finally {
+      console.warn = orig;
+    }
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/color domain has no color for 1 of the fill column's values \("I"\)/);
+    expect(warnings[0]).toMatch(/drawn invisible/);
   });
 });

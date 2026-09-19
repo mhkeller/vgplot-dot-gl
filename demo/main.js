@@ -8,13 +8,12 @@ import { buildPickIndex, pickDot } from '../src/pick.js';
 const PARTY_COLORS = { D: '#2166ac', R: '#b2182b', I: '#4d9221', G: '#e08214' };
 const POINT_COLOR = '#4a6fa5';
 
-// ?rows=50000&painter=gl&seed=0.42 makes a run repeatable (the seed fixes DuckDB's random()).
+// ?rows=50000&seed=0.42 makes a run repeatable (the seed fixes DuckDB's random()).
 const params = new URLSearchParams(location.search);
 const seed = params.has('seed') ? Number(params.get('seed')) : null;
 
 const ui = {
   rows: document.getElementById('rows'),
-  painter: document.getElementById('painter'),
   benchmark: document.getElementById('benchmark'),
   status: document.getElementById('status'),
   grid: document.getElementById('grid'),
@@ -45,6 +44,9 @@ async function loadData(n) {
       power(random(), 2) * 100 AS volume,
       random() * 2 - 1 AS shift,
       ['D', 'R', 'I', 'G'][1 + floor(random() * 4)::INT] AS party,
+      DATE '2020-01-01' + (random() * 1800)::INT AS day,
+      TIMESTAMP '2020-01-01' + to_seconds((random() * 1800 * 86400)::BIGINT) AS ts,
+      TIME '00:00:00' + to_seconds((random() * 86400)::BIGINT) AS tod,
       row_number() OVER () AS id
     FROM range(${n})`);
   // The marks' SQL text hasn't changed, so mosaic's query cache would hand back the old rows.
@@ -60,13 +62,16 @@ const PANELS = [
   { title: 'size vs price · log-log · party · r volume', x: 'size', y: 'price', fill: 'party', size: 'volume', log: true },
   { title: 'volume vs shift · brush filters the next panel', x: 'volume', y: 'shift', fill: 'party', brush: true },
   { title: 'size vs price · filtered by the brush', x: 'size', y: 'price', fill: 'party', log: true, filtered: true },
-  { title: 'price vs volume · continuous color by shift', x: 'price', y: 'volume', fill: 'shift', scheme: 'viridis' }
+  { title: 'price vs volume · continuous color by shift', x: 'price', y: 'volume', fill: 'shift', scheme: 'viridis' },
+  // The three date types. `tod` on r checks a date-typed radius, which the tooltip used to print as a raw number.
+  { title: 'day vs price · DATE on x · TIME on r', x: 'day', y: 'price', fill: 'party', size: 'tod', sizeIsDate: true },
+  { title: 'ts vs volume · TIMESTAMP on x · DATE as color', x: 'ts', y: 'volume', fill: 'day', scheme: 'viridis' }
 ];
 
 let brush = null;
 let panels = [];
 
-async function buildPanel(spec, { painter, benchmark }) {
+async function buildPanel(spec, { benchmark }) {
   const view = 'pts';
   const marks = [];
   const colored = !!spec.fill;
@@ -75,7 +80,9 @@ async function buildPanel(spec, { painter, benchmark }) {
 
   let rDomain = null;
   if (sized) {
-    const [s] = await query(`SELECT quantile_cont("${spec.size}", 0.05) AS lo, quantile_cont("${spec.size}", 0.95) AS hi FROM ${view}`);
+    // A date or time column's quantile is itself a date, so take it as the milliseconds the mark draws with.
+    const q = p => (spec.sizeIsDate ? `epoch_ms(quantile_cont("${spec.size}", ${p}))` : `quantile_cont("${spec.size}", ${p})`);
+    const [s] = await query(`SELECT ${q(0.05)} AS lo, ${q(0.95)} AS hi FROM ${view}`);
     if (s && s.hi > s.lo) rDomain = [s.lo, s.hi];
   }
 
@@ -90,8 +97,7 @@ async function buildPanel(spec, { painter, benchmark }) {
       clip: true,
       fill: colored ? spec.fill : POINT_COLOR,
       key: vg.int32('id'),
-      tip: { fields: ['id', 'party'] },
-      painter,
+      tip: { fields: ['id', 'party', 'day', 'ts', 'tod'] },
       benchmark
     })
   );
@@ -132,9 +138,10 @@ function describeStats(plotEl, ms) {
   const mark = plot.marks.find(m => m.stats !== undefined);
   const s = mark?.stats;
   const parts = [Number.isFinite(ms) ? `render ${ms.toFixed(1)} ms` : 'refined after idle'];
-  if (s?.painter === 'gl') parts.push(`upload ${s.uploadMs.toFixed(1)} · draw ${s.drawMs.toFixed(1)} · blit ${s.blitMs.toFixed(1)} · ${s.drawn.toLocaleString()} dots · dpr ${s.dpr.toFixed(2)}${s.reduced ? ' (reduced)' : ''}${s.refined ? ' (refined)' : ''} · ~${(s.estimate / 1e6).toFixed(0)}M frags`);
+  if (s?.skipped) parts.push(s.skipped);
+  else if (s?.painter === 'gl') parts.push(`upload ${s.uploadMs.toFixed(1)} · draw ${s.drawMs.toFixed(1)} · blit ${s.blitMs.toFixed(1)} · ${s.drawn.toLocaleString()} dots · dpr ${s.dpr.toFixed(2)}${s.reduced ? ' (reduced)' : ''}${s.refined ? ' (refined)' : ''} · ~${(s.estimate / 1e6).toFixed(0)}M frags`);
   else if (s?.painter === 'rect2d') parts.push(`canvas draw ${s.drawMs.toFixed(1)} · ${s.drawn.toLocaleString()} dots`);
-  else if (mark) parts.push(`${plotEl.querySelectorAll('circle').length.toLocaleString()} svg circles`);
+  else parts.push(`${plotEl.querySelectorAll('circle').length.toLocaleString()} svg circles`);
   return parts.join('\n');
 }
 
@@ -158,7 +165,6 @@ function disposePanels(list) {
 async function rebuild() {
   delete document.body.dataset.ready;
   const rows = +ui.rows.value;
-  const painter = ui.painter.value;
   const benchmark = ui.benchmark.checked;
   disposePanels(panels);
   panels = [];
@@ -168,7 +174,7 @@ async function rebuild() {
   for (const spec of PANELS) {
     const host = makePanelHost(spec);
     ui.grid.append(host.panel);
-    const plotEl = await buildPanel(spec, { painter, benchmark });
+    const plotEl = await buildPanel(spec, { benchmark });
     plotEl.addEventListener('rendered', e => { host.stats.textContent = describeStats(plotEl, e.detail.ms); });
     plotEl.addEventListener('dotgl-refine', () => { host.stats.textContent = describeStats(plotEl, NaN); });
     host.mount.replaceChildren(plotEl);
@@ -176,7 +182,7 @@ async function rebuild() {
   }
   await Promise.all(panels.map(p => firstRender(p.plotEl)));
   const gl = getSharedGL();
-  ui.status.textContent = `${rows.toLocaleString()} rows · ${painter} · ${panels.length} plots ready in ${Math.round(performance.now() - t0)} ms` + (gl ? ` · shared GL ${gl.width}×${gl.height}` : ' · no WebGL2');
+  ui.status.textContent = `${rows.toLocaleString()} rows · ${panels.length} plots ready in ${Math.round(performance.now() - t0)} ms` + (gl ? ` · shared GL ${gl.width}×${gl.height}` : ' · no WebGL2');
   document.body.dataset.ready = '1';
 }
 
@@ -215,12 +221,13 @@ async function compare() {
   delete ui.ab.dataset.ready;
   await exec('CREATE OR REPLACE VIEW pts50 AS SELECT * FROM pts ORDER BY id LIMIT 50000');
   const [s] = await query('SELECT quantile_cont(volume, 0.05) AS lo, quantile_cont(volume, 0.95) AS hi FROM pts50');
-  for (const painter of ['dot', 'gl']) {
-    const host = makePanelHost({ title: `A/B · ${painter === 'dot' ? 'SVG circles (vg.dot)' : 'dotGL'} · 50k rows` });
+  for (const kind of ['dot', 'gl']) {
+    const host = makePanelHost({ title: `A/B · ${kind === 'dot' ? 'SVG circles (vg.dot)' : 'dotGL'} · 50k rows` });
     ui.ab.append(host.panel);
     const keys = Object.keys(PARTY_COLORS);
+    const mark = kind === 'dot' ? vg.dot : dotGL;
     const plotEl = vg.plot(
-      dotGL(vg.from('pts50'), { x: 'size', y: 'price', r: 'volume', fill: 'party', opacity: 0.6, clip: true, painter }),
+      mark(vg.from('pts50'), { x: 'size', y: 'price', r: 'volume', fill: 'party', opacity: 0.6, clip: true }),
       vg.rRange([2, 11]), vg.rDomain([s.lo, s.hi]),
       vg.colorDomain(keys), vg.colorRange(keys.map(k => PARTY_COLORS[k])), vg.colorLegend({ columns: 1 }),
       vg.xScale('log'), vg.yScale('log'), vg.width(430), vg.height(330), vg.marginLeft(64),
@@ -236,7 +243,6 @@ async function compare() {
 document.getElementById('rebuild').addEventListener('click', () => rebuild());
 document.getElementById('zoomtest').addEventListener('click', () => zoomTest());
 document.getElementById('compare').addEventListener('click', () => compare());
-ui.painter.addEventListener('change', () => rebuild());
 ui.rows.addEventListener('change', () => rebuild());
 
 window.demo = { rebuild, zoomTest, compare, panels: () => panels, vg, getSharedGL, disposeSharedGL, dotGL, buildPickIndex, pickDot };
@@ -245,6 +251,5 @@ if (params.has('rows')) {
   if (![...ui.rows.options].some(o => o.value === rows)) ui.rows.add(new Option(rows, rows));
   ui.rows.value = rows;
 }
-if (params.has('painter')) ui.painter.value = params.get('painter');
 if (params.get('benchmark') === '1') ui.benchmark.checked = true;
 rebuild().then(() => { document.body.dataset.ready = '1'; }).catch(err => { ui.status.textContent = `error: ${err.message}`; console.error(err); });

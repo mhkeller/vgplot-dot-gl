@@ -149,10 +149,13 @@ function estimateFragments(gpu, sr, style, dpr) {
  * @param {object} options
  * @param {boolean} [options.allowReduce] draw at a lower resolution when the
  *   estimated painting work is over the mark's budget (the mark then schedules
- *   a sharp repaint once zooming stops)
+ *   a full-resolution redraw once zooming stops)
  */
 export function paintGL(mark, canvas, { sx, sy, sr, lines, frame, style }, { allowReduce = false } = {}) {
   const shared = getSharedGL(mark.blit);
+  // No WebGL2 at all. The mark picks the canvas painter instead, so this only happens
+  // if something calls the WebGL painter directly.
+  if (!shared) return { painter: 'gl', skipped: 'no webgl2' };
   if (shared.lost) {
     shared.refs.add(mark); // so the plot is redrawn too when the context comes back
     return { painter: 'gl', skipped: 'context lost' };

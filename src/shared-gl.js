@@ -6,12 +6,17 @@ import { VERTEX, FRAGMENT, UNIFORMS } from './shaders.js';
  * context keeps a page full of plots well under the browser's limit on how many
  * WebGL contexts can be alive at once.
  *
- * There are two ways to copy the picture out. The first mark that asks picks one:
+ * There are two ways to copy the picture out, and the choice is made once for the
+ * whole page by the first mark that asks:
  * - 'drawImage': a plain canvas that isn't on the page; each plot's 2D canvas
- *   draws from it.
+ *   draws from it. This is the default and the fast path on every engine today.
+ *   Chrome reuses the texture already on the graphics card, and Firefox 140 fixed
+ *   the readback this used to cost (bug 1938053).
  * - 'bitmaprenderer': an OffscreenCanvas; each frame is handed over as an
- *   ImageBitmap. This one exists to measure browsers where drawImage from a
- *   WebGL canvas is slow.
+ *   ImageBitmap. In theory this hands over the pixels without copying, but both
+ *   Firefox (bug 1788206) and Safari (WebKit 234920) still read the whole image
+ *   back to the processor first, so it is the slower one on two engines out of
+ *   three. It is kept for measuring, not for use.
  */
 
 // Two library copies on one page share this record, so bump the number when the shaders, the attribute layout or the state object's methods change.
@@ -69,7 +74,7 @@ function setup(state) {
 
 /**
  * The shared context, made the first time someone asks. Returns null when the
- * browser has no WebGL2, so the caller can use another painter.
+ * browser has no WebGL2, in which case the mark draws with plain canvas squares.
  * @param {'drawImage'|'bitmaprenderer'} [blit]
  */
 export function getSharedGL(blit = 'drawImage') {

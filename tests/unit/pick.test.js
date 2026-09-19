@@ -23,10 +23,10 @@ function scatter(n, seed = 3) {
  * The mark's `lastPaint` then holds the real scales, and the figure's own scales feed the reference.
  */
 function painted(rows, options, plot = {}, setup = () => {}) {
-  const mark = new DotGLMark(rows, { painter: 'rect2d', ...options });
+  const mark = new DotGLMark(rows, { ...options });
   setup(mark);
   const ctx = { setTransform() {}, clearRect() {}, fillRect() {} };
-  const canvas2d = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx);
+  const canvas2d = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(type => (type === '2d' ? ctx : null));
   try {
     const [{ data, options: o }] = mark.plotSpecs();
     const fig = Plot.plot({ document, width: 320, height: 240, ...plot, marks: [Plot.dot(data, o)] });

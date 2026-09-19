@@ -6,7 +6,7 @@ test('500k rows per plot: renders, refines, and reports timings', async ({ page 
   // Headless Chromium draws in software. Waiting for the "graphics card" there is
   // meaningless and very slow, so only the browsers with a real one wait.
   const benchmark = testInfo.project.name.startsWith('chromium') ? 0 : 1;
-  const errors = await openDemo(page, `/?rows=500000&seed=0.42&painter=gl&benchmark=${benchmark}`, { timeout: 600_000 });
+  const errors = await openDemo(page, `/?rows=500000&seed=0.42&benchmark=${benchmark}`, { timeout: 600_000 });
   await page.waitForTimeout(1500);
   const panels = await panelStats(page);
   for (const p of panels) {

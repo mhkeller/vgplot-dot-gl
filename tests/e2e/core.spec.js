@@ -2,17 +2,17 @@ import { test, expect } from '@playwright/test';
 import { openDemo, panelStats, selfParity, paintedPixels, plotGeometry, settle, rowUnder } from './helpers.js';
 
 test.describe('dotGL core behavior', () => {
-  test('renders seven GPU plots with legends and no errors', async ({ page }) => {
+  test('renders nine GPU plots with legends and no errors', async ({ page }) => {
     const errors = await openDemo(page);
     const panels = await panelStats(page);
-    expect(panels).toHaveLength(7);
+    expect(panels).toHaveLength(9);
     for (const p of panels) {
       expect(p.stats.painter, p.title).toBe('gl');
       expect(p.stats.drawn, p.title).toBe(50000);
       expect(p.hasCanvas, p.title).toBe(true);
     }
-    expect(panels.filter(p => p.legend === 1)).toHaveLength(6);
-    await expect(page.locator('#status')).toContainText('7 plots ready');
+    expect(panels.filter(p => p.legend === 1)).toHaveLength(8);
+    await expect(page.locator('#status')).toContainText('9 plots ready');
     // The number-colored panel gets a ramp legend, the category ones get swatches.
     const legends = await page.evaluate(() => demo.panels().map(p => ({ swatches: p.plotEl.querySelectorAll('.legend .swatch, .legend div > div').length > 0, ramp: !!p.plotEl.querySelector('.legend svg image, .legend svg rect') })));
     expect(legends[6].ramp).toBe(true);
@@ -56,7 +56,7 @@ test.describe('dotGL core behavior', () => {
 
   test('each panel paints its own rows at the scale positions', async ({ page }) => {
     const errors = await openDemo(page);
-    for (let i = 0; i < 7; ++i) {
+    for (let i = 0; i < 9; ++i) {
       const r = await selfParity(page, i);
       expect(r.tested, `panel ${i}`).toBeGreaterThan(150);
       expect(r.hit, `panel ${i}: ${JSON.stringify(r.misses)}`).toBe(r.tested);
@@ -75,7 +75,7 @@ test.describe('dotGL core behavior', () => {
         SELECT 'x' || lpad((i % 20)::VARCHAR, 2, '0') AS gx, (i // 20)::DOUBLE AS gy, 'f' || lpad(i::VARCHAR, 3, '0') AS name FROM range(600) t(i)
         UNION ALL SELECT NULL, 30, NULL`);
       const colors = ['#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00', '#a65628', '#f781bf'];
-      window.catGrid = vg.plot(dotGL(vg.from('cat_grid'), { x: 'gx', y: 'gy', fill: 'name', r: 2, painter: 'gl' }), vg.colorRange(colors), vg.width(430), vg.height(330));
+      window.catGrid = vg.plot(dotGL(vg.from('cat_grid'), { x: 'gx', y: 'gy', fill: 'name', r: 2 }), vg.colorRange(colors), vg.width(430), vg.height(330));
       document.body.append(window.catGrid);
     });
     await page.waitForFunction(() => !!catGrid.value.marks[0].stats && !catGrid.value.pendingRender, null, { timeout: 20_000 });
@@ -221,7 +221,7 @@ test.describe('dotGL core behavior', () => {
       const s = demo.getSharedGL();
       return { refs: s.refs.size, glError: s.gl.getError() };
     });
-    expect(disposed.refs).toBe(7);
+    expect(disposed.refs).toBe(9);
     expect(disposed.glError).toBe(0);
     expect(await paintedPixels(page, 0)).toBe(before);
     expect(errors).toEqual([]);

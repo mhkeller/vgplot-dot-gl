@@ -3,11 +3,7 @@ import type { GroupByExpr, OrderByExpr } from '@uwdata/mosaic-sql';
 
 /** The vg.dot options (x, y, r, fill, opacity, fillOpacity, clip, ...) plus the options only this mark has. */
 export interface DotGLOptions {
-  /** 'gl' draws with the graphics card, 'rect2d' draws squares on a plain canvas, 'dot' is the original SVG dots. Default 'gl'. */
-  painter?: 'gl' | 'rect2d' | 'dot';
-  /** What to use when the browser has no WebGL2. Default 'rect2d'. */
-  fallback?: 'rect2d' | 'dot';
-  /** How the picture is copied into the plot. Default 'drawImage'. */
+  /** How the picture is copied into the plot. Default 'drawImage', which is the fast path everywhere; 'bitmaprenderer' is for measuring. */
   blit?: 'drawImage' | 'bitmaprenderer';
   /** '-r' draws big dots first when r is a column; null keeps the row order. Default '-r'. */
   sort?: '-r' | null;
@@ -28,7 +24,7 @@ export interface DotGLOptions {
   [option: string]: unknown;
 }
 
-/** Timings and counts from the last draw. The 'rect2d' painter fills in only painter, drawn and drawMs. */
+/** Timings and counts from the last draw. Without WebGL2 the mark draws squares on a plain canvas and fills in only painter, drawn and drawMs. */
 export interface DotGLStats {
   painter: 'gl' | 'rect2d';
   drawn?: number;
@@ -38,7 +34,7 @@ export interface DotGLStats {
   dpr?: number;
   /** The frame was drawn at a lower resolution while zooming. */
   reduced?: boolean;
-  /** The sharp repaint after zooming stopped. */
+  /** The full-resolution redraw after zooming stopped. */
   refined?: boolean;
   /** Estimated pixels painted for the frame. */
   estimate?: number;

@@ -39,15 +39,19 @@ function resolveCSS(str, context) {
  * categories. Entry i is the color of category i. It is laid out in rows of 256
  * (row i / 256 of a 256×256 texture), and has as many rows as the categories
  * need. Unused entries stay transparent, which also hides rows whose category is
- * not in the color domain.
+ * not in the color domain; those category numbers are pushed onto `missing` so
+ * the caller can say so, since dots drawn invisible give no other sign.
  */
-export function paletteFromValues(fillValues, count) {
+export function paletteFromValues(fillValues, count, missing) {
   const n = Math.min(count, 65535, fillValues.length);
   const rows = Math.max(1, Math.ceil(n / 256));
   const out = new Uint8Array(256 * rows * 4);
   for (let i = 0; i < n; ++i) {
     const c = parse(fillValues[i])?.rgb();
-    if (!c) continue;
+    if (!c) {
+      missing?.push(i);
+      continue;
+    }
     out[i * 4] = c.r;
     out[i * 4 + 1] = c.g;
     out[i * 4 + 2] = c.b;

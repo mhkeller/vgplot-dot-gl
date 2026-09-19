@@ -2,9 +2,9 @@ import { transformFor, affine, axisAffine } from '../scale-map.js';
 
 /**
  * A plain 2D canvas painter: one filled square per dot, in the same draw order
- * as the WebGL painter. It is the fallback when the browser has no WebGL2, and
- * the tests use it to check that the plot is hooked up right, so it has to put
- * dots exactly where the WebGL painter does.
+ * as the WebGL painter. The mark picks it on its own when the browser has no
+ * WebGL2, and it is how the tests draw, since jsdom has no graphics card. Either
+ * way it has to put dots exactly where the WebGL painter does.
  */
 export function paintRect2D(mark, canvas, { sx, sy, sr, lines, frame, style }) {
   const t0 = performance.now();

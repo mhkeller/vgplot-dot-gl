@@ -1,6 +1,6 @@
 /** Helpers for the browser tests. Code inside page.evaluate runs in the demo page. */
 
-export const DEMO = '/?rows=50000&seed=0.42&painter=gl';
+export const DEMO = '/?rows=50000&seed=0.42';
 
 /** Open the demo, wait for all the plots, and collect page errors. */
 export async function openDemo(page, url = DEMO, { timeout = 120_000 } = {}) {

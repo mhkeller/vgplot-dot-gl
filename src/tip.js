@@ -4,6 +4,12 @@ import { buildPickIndex, pickDot } from './pick.js';
 /** The name the key column comes back under in the mark's data. */
 export const KEY_AS = '__dotgl_key';
 
+/** How far outside the dot the ring around it sits. */
+const RING_PAD = 2;
+
+/** Clear space between that ring and the tooltip, so the two don't crowd the pointer. */
+const TIP_GAP = 12;
+
 /** A paint this new doesn't get a pick index yet, so moving the pointer during a wheel zoom builds none. */
 const QUIET_MS = 150;
 
@@ -22,14 +28,58 @@ const STYLE = `
 :where(.dotgl-swatch) { display: inline-block; width: 8px; height: 8px; margin-right: 4px; border-radius: 2px; }
 `;
 
-/** A value as tooltip text. Dates (Date objects, or epoch milliseconds when `date` is set) show as ISO, without the time at UTC midnight. */
-function format(value, date) {
-  if (value instanceof Date || (date && typeof value === 'number')) {
-    if (!Number.isFinite(+value)) return '';
-    const iso = new Date(+value).toISOString();
-    return iso.endsWith('T00:00:00.000Z') ? iso.slice(0, 10) : iso;
+/**
+ * Arrow's type number for a time of day, from the Arrow format itself, and what to
+ * multiply each of its units by to get milliseconds. A time has no JavaScript
+ * equivalent, so it arrives as a plain integer counting whatever unit the column
+ * uses, unlike a date or a timestamp which arrive as Date objects.
+ */
+const ARROW_TIME = 9;
+const TO_MS = [1e3, 1, 1e-3, 1e-6];
+
+/** The SQL types that carry a time zone, so their values really are instants in UTC. */
+const ZONED = new Set(['TIMESTAMPTZ', 'TIMESTAMP WITH TIME ZONE']);
+
+/** The time of day of an epoch time, with a trailing zero seconds or milliseconds left off. */
+function timeOfDay(ms) {
+  return new Date(ms).toISOString().slice(11, 23).replace(/\.000$/, '').replace(/:00$/, '');
+}
+
+/**
+ * An epoch time as ISO, with a trailing zero seconds or milliseconds left off. A
+ * timestamp column keeps its time even at midnight, so every row of one column reads the
+ * same way; a bare Date, whose column type isn't known, drops it the way Plot does.
+ * `zone` is 'Z' only for a type that carries one: a plain DuckDB TIMESTAMP says nothing
+ * about where it is from.
+ */
+function isoStamp(ms, zone, keepTime) {
+  const iso = new Date(ms).toISOString();
+  const time = timeOfDay(ms);
+  return !keepTime && time === '00:00' ? iso.slice(0, 10) : `${iso.slice(0, 10)}T${time}${zone}`;
+}
+
+/**
+ * A value as tooltip text.
+ *
+ * `kind` says how to read it: the column's SQL type when the column holds epoch
+ * milliseconds that stand for a date, or true for a Date object whose type isn't known.
+ * `fmt` is a tick format the page set for this scale, which wins when there is one, so
+ * the tooltip and the axis read the same.
+ */
+function format(value, kind, fmt) {
+  const stamp = kind && typeof value === 'number';
+  const isDate = value instanceof Date || stamp;
+  if (isDate && !Number.isFinite(+value)) return '';
+  if (typeof value === 'number' && Number.isNaN(value)) return '';
+  // The axis hands a time scale's format a Date, so this does too.
+  if (fmt && value != null) return String(fmt(stamp ? new Date(+value) : value));
+  if (isDate) {
+    const ms = +value;
+    if (kind === 'DATE') return new Date(ms).toISOString().slice(0, 10);
+    if (kind === 'TIME') return timeOfDay(ms);
+    return isoStamp(ms, ZONED.has(kind) ? 'Z' : '', typeof kind === 'string');
   }
-  if (typeof value === 'number') return Number.isNaN(value) ? '' : NUMBER.format(value);
+  if (typeof value === 'number') return NUMBER.format(value);
   return value == null ? '' : String(value);
 }
 
@@ -57,6 +107,8 @@ export class DotGLTip {
     this.wanted = null;
     /** The field list `mark.tipRows` was filled for, and the fields in it the tip looks up. */
     this.fieldsFor = null;
+    /** The kind of each extra field whose values need one to read right, filled in as rows arrive. */
+    this.extraKinds = {};
     this.extras = NO_FIELDS;
     this.clientX = 0;
     this.clientY = 0;
@@ -165,7 +217,7 @@ export class DotGLTip {
     }
     this.ring.setAttribute('cx', hit.px + frame.fx);
     this.ring.setAttribute('cy', hit.py + frame.fy);
-    this.ring.setAttribute('r', hit.r + 2);
+    this.ring.setAttribute('r', hit.r + RING_PAD);
     svg.appendChild(this.ring);
 
     // Fields are read now, so the page can change a Param holding them without rebuilding the plot.
@@ -173,6 +225,7 @@ export class DotGLTip {
     if (list !== this.fieldsFor) {
       mark.tipRows = new Map();
       this.fieldsFor = list;
+      this.extraKinds = {};
       this.extras = list.filter(name => !this.names.includes(name));
     }
     if (this.extras.length) {
@@ -193,7 +246,7 @@ export class DotGLTip {
   /** Fills the tip with the shown dot's values and places it next to the dot. Extra fields not looked up yet show '…'. */
   draw() {
     const { mark, svg, tip, shown: { j, px, py, r } } = this;
-    const { frame, prep, style, labels } = this.index.paint;
+    const { frame, prep, style, labels, formats = {} } = this.index.paint;
     const doc = tip.ownerDocument;
     const table = doc.createElement('table');
     // Values are user data, so they only ever go in as text.
@@ -220,15 +273,15 @@ export class DotGLTip {
     for (const group of mark.groups) row(group.name, format(mark.data.columns[group.as][j]), group === fillGroup && color);
     for (const name of ['x', 'y']) {
       const cats = prep[`${name}Cats`];
-      row(labels[name] ?? channel(name).as, format(cats ? cats[value(name)] : value(name), prep.dates[name]));
+      row(labels[name] ?? channel(name).as, format(cats ? cats[value(name)] : value(name), prep.dates[name], formats[name]));
     }
     if (fill && !fillGroup) {
-      row(fill.as, prep.continuous ? format(value('fill'), prep.dates.fill) : format(prep.cats[code]), color);
+      row(fill.as, prep.continuous ? format(value('fill'), prep.dates.fill, formats.fill) : format(prep.cats[code], false, formats.fill), color);
     }
-    if (channel('r')) row(channel('r').as, format(value('r')));
+    if (channel('r')) row(channel('r').as, format(value('r'), prep.dates.r));
     const pending = this.shownId != null && !mark.tipRows.has(this.shownId);
     const extra = mark.tipRows.get(this.shownId);
-    for (const name of this.extras) row(name, pending ? '…' : format(extra?.[name]));
+    for (const name of this.extras) row(name, pending ? '…' : format(extra?.[name], this.extraKinds[name]));
     tip.replaceChildren(table);
 
     // Right of the dot, or left of it when there is no room; kept inside the plot element vertically.
@@ -238,10 +291,11 @@ export class DotGLTip {
     el.appendChild(tip);
     const ctm = svg.getScreenCTM();
     const box = el.getBoundingClientRect();
-    const rightOf = new DOMPoint(px + frame.fx + r + 6, py + frame.fy).matrixTransform(ctm);
+    const gap = r + RING_PAD + TIP_GAP;
+    const rightOf = new DOMPoint(px + frame.fx + gap, py + frame.fy).matrixTransform(ctm);
     let left = rightOf.x - box.left;
     if (left + tip.offsetWidth > el.clientWidth) {
-      left = new DOMPoint(px + frame.fx - r - 6, 0).matrixTransform(ctm).x - box.left - tip.offsetWidth;
+      left = new DOMPoint(px + frame.fx - gap, 0).matrixTransform(ctm).x - box.left - tip.offsetWidth;
     }
     const top = Math.max(0, Math.min(rightOf.y - box.top - tip.offsetHeight / 2, el.clientHeight - tip.offsetHeight));
     tip.style.left = `${left}px`;
@@ -275,15 +329,20 @@ export class DotGLTip {
         const table = await mark.coordinator.query(query, { cache: false });
         // Columns are read in select order: DuckDB names a column the way the table spells it, which can differ in case from the field.
         // Each value is read on its own, so one that can't be read (a 64-bit integer past 2^53) leaves only its own cell empty.
-        const read = k => {
+        // A time column is turned into milliseconds since midnight and remembered as a time, so it
+        // shows as one; the result carries its own Arrow type, so this costs no extra query.
+        const read = (k, name) => {
           const child = table.getChildAt(k);
           try {
-            return child.at(0);
+            const value = child.at(0);
+            if (child.type?.typeId !== ARROW_TIME) return value;
+            this.extraKinds[name] = 'TIME';
+            return typeof value === 'number' ? value * (TO_MS[child.type.unit] ?? 1) : value;
           } catch {
             return null;
           }
         };
-        rows.set(id, table.numRows ? Object.fromEntries(Object.keys(select).map((name, k) => [name, read(k)])) : null);
+        rows.set(id, table.numRows ? Object.fromEntries(Object.keys(select).map((name, k) => [name, read(k, name)])) : null);
         // Skip the redraw when the table, the fields or the painted dots changed while the query ran.
         if (rows === mark.tipRows && this.shownId === id && mark.lastPaint === this.index?.paint) this.draw();
       }

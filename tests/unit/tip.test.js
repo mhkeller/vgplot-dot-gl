@@ -7,12 +7,16 @@ import { DotGLTip, KEY_AS } from '../../src/tip.js';
 /** A coordinator whose lookups wait until the test resolves them with rows, or rejects them. */
 function coordinator() {
   const calls = [];
-  const table = rows => ({ numRows: rows.length, getChildAt: k => ({ at: i => rows[i][Object.keys(rows[i])[k]] }) });
+  // `types` gives a column an Arrow type, as a real result carries one. 9 is Arrow's time type.
+  const table = (rows, types = []) => ({
+    numRows: rows.length,
+    getChildAt: k => ({ at: i => rows[i][Object.keys(rows[i])[k]], type: types[k] })
+  });
   return {
     calls,
     query(query, options) {
       return new Promise((resolve, reject) => {
-        calls.push({ sql: String(query), options, resolve: rows => resolve(table(rows)), reject });
+        calls.push({ sql: String(query), options, resolve: (rows, types) => resolve(table(rows, types)), reject });
       });
     }
   };
@@ -23,17 +27,18 @@ function coordinator() {
  * with the rect2d painter into a stub canvas, inside a stand-in vgplot plot. The tip listens on Plot's SVG, whose
  * screen matrix is the identity. `key` holds the key column, which is `columns.id` unless given.
  */
-function hovered(columns, options, { types = {}, categories = {}, second = null, key = Int32Array.from(columns.id) } = {}) {
+function hovered(columns, options, { types = {}, sqlTypes = {}, categories = {}, attrs = {}, second = null, key = Int32Array.from(columns.id) } = {}) {
   const element = document.createElement('div');
   document.body.append(element);
   // jsdom never matches :hover, so the pointer counts as over the plot unless a test says otherwise.
   element.matches = () => true;
-  const plot = { element, interactors: [], addParams() {}, pending() {}, addInteractor(i) { this.interactors.push(i); } };
+  const plot = { element, interactors: [], addParams() {}, pending() {}, addInteractor(i) { this.interactors.push(i); }, getAttribute: name => attrs[name] };
   const marks = [options, second].filter(Boolean).map((o, index) => {
-    const mark = new DotGLMark({ table: 'pts' }, { painter: 'rect2d', key: 'id', ...o });
+    const mark = new DotGLMark({ table: 'pts' }, { key: 'id', ...o });
     mark.setPlot(plot, index);
     mark.coordinator = coordinator();
     for (const [name, type] of Object.entries(types)) mark.channelField(name).type = type;
+    for (const [name, sqlType] of Object.entries(sqlTypes)) mark.channelField(name).sqlType = sqlType;
     for (const [as, cats] of Object.entries(categories)) mark.categories.set(as, { cats });
     mark.data = { numRows: columns.id.length, columns: { ...columns, [KEY_AS]: key } };
     return mark;
@@ -43,7 +48,7 @@ function hovered(columns, options, { types = {}, categories = {}, second = null,
   /** Renders the plot, as Mosaic does on every redraw: each tip gets the new SVG, which then replaces the old one. */
   const render = () => {
     const ctx = { setTransform() {}, clearRect() {}, fillRect() {} };
-    const canvas2d = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx);
+    const canvas2d = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(type => (type === '2d' ? ctx : null));
     try {
       const svg = Plot.plot({ document, width: 320, height: 200, marks: marks.map(m => { const [{ data, options: o }] = m.plotSpecs(); return Plot.dot(data, o); }) });
       svg.getScreenCTM = () => ({ e: 0, f: 0, inverse() { return this; } });
@@ -394,17 +399,84 @@ describe('DotGLTip', () => {
     expect(swatches[0].closest('tr').querySelector('th').textContent).toBe('party');
   });
 
-  it('shows epoch-millisecond dates as ISO, without the time at UTC midnight', async () => {
+  it('shows a DATE as a date and a TIMESTAMP with its time, keeping the time at midnight', async () => {
     const columns = {
       ...line(),
       day: Float64Array.from({ length: 10 }, (_, i) => Date.UTC(2021, 4, 1 + i)),
       at: Float64Array.from({ length: 10 }, (_, i) => Date.UTC(2020, 0, 1, 12, i)),
       big: Float64Array.from({ length: 10 }, (_, i) => 12345.678 * i)
     };
-    const { moveTo, rows } = hovered(columns, { x: 'day', y: 'big', fill: 'at', tip: true }, { types: { x: 'date', y: 'number', fill: 'date' } });
+    const opts = { types: { x: 'date', y: 'number', fill: 'date' }, sqlTypes: { x: 'DATE', fill: 'TIMESTAMP' } };
+    const { moveTo, rows } = hovered(columns, { x: 'day', y: 'big', fill: 'at', tip: true }, opts);
     await vi.advanceTimersByTimeAsync(200);
     moveTo(5);
     await vi.advanceTimersByTimeAsync(20);
-    expect(rows()).toEqual([['day', '2021-05-06'], ['big', '61,728.39'], ['at', '2020-01-01T12:05:00.000Z']]);
+    // The zero seconds and milliseconds are trimmed the way Plot trims them, and no Z: a DuckDB
+    // TIMESTAMP says nothing about a time zone.
+    expect(rows()).toEqual([['day', '2021-05-06'], ['big', '61,728.39'], ['at', '2020-01-01T12:05']]);
+    // Row 0 is exactly midnight. A timestamp column keeps its time there, so every row reads alike.
+    moveTo(0);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(rows()).toEqual([['day', '2021-05-01'], ['big', '0'], ['at', '2020-01-01T12:00']]);
+  });
+
+  it('shows a TIME as a time of day, and a date-typed r as a date, not a raw number', async () => {
+    const columns = {
+      ...line(),
+      tod: Float64Array.from({ length: 10 }, (_, i) => (9 * 3600 + i * 60) * 1000),
+      day: Float64Array.from({ length: 10 }, (_, i) => Date.UTC(2021, 4, 1 + i)),
+      big: Float64Array.from({ length: 10 }, (_, i) => 12345.678 * i)
+    };
+    const opts = { types: { x: 'date', y: 'number', r: 'date' }, sqlTypes: { x: 'TIME', r: 'DATE' } };
+    const { moveTo, rows } = hovered(columns, { x: 'tod', y: 'big', r: 'day', tip: true }, opts);
+    await vi.advanceTimersByTimeAsync(200);
+    moveTo(5);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(rows()).toEqual([['tod', '09:05'], ['big', '61,728.39'], ['day', '2021-05-06']]);
+  });
+
+  it('uses a tick format the plot sets, and ignores one that is a format string', async () => {
+    const columns = {
+      ...line(),
+      day: Float64Array.from({ length: 10 }, (_, i) => Date.UTC(2021, 4, 1 + i)),
+      big: Float64Array.from({ length: 10 }, (_, i) => 12345.678 * i)
+    };
+    const opts = { types: { x: 'date', y: 'number' }, sqlTypes: { x: 'DATE' } };
+    const shown = attrs => hovered(columns, { x: 'day', y: 'big', tip: true }, { ...opts, attrs });
+    // A function is used for both the axis and the tip, so the two read the same.
+    const fn = shown({ xTickFormat: d => `day ${d.getUTCDate()}` });
+    await vi.advanceTimersByTimeAsync(200);
+    fn.moveTo(5);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(fn.rows()[0]).toEqual(['day', 'day 6']);
+
+    // A d3 format string would need a formatting library this package doesn't carry, so it falls through.
+    const str = shown({ xTickFormat: '%Y' });
+    await vi.advanceTimersByTimeAsync(200);
+    str.moveTo(5);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(str.rows()[0]).toEqual(['day', '2021-05-06']);
+  });
+
+  it('shows a time field as a time, converting from the unit its column counts in', async () => {
+    const { moveTo, calls, cell } = hovered(line(), { x: 'a', y: 'b', r: 3, tip: { fields: ['tod', 'n'] } });
+    await vi.advanceTimersByTimeAsync(200);
+    moveTo(3);
+    await vi.advanceTimersByTimeAsync(120);
+    // 23:54:59 as microseconds, which is how DuckDB hands over a TIME, alongside a plain number.
+    calls[0].resolve([{ tod: 86099000000, n: 42 }], [{ typeId: 9, unit: 2 }, { typeId: 8 }]);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(cell('tod')).toBe('23:54:59');
+    expect(cell('n')).toBe('42');
+  });
+
+  it('reads a time column that counts in milliseconds just as well', async () => {
+    const { moveTo, calls, cell } = hovered(line(), { x: 'a', y: 'b', r: 3, tip: { fields: ['tod'] } });
+    await vi.advanceTimersByTimeAsync(200);
+    moveTo(3);
+    await vi.advanceTimersByTimeAsync(120);
+    calls[0].resolve([{ tod: 34215000 }], [{ typeId: 9, unit: 1 }]);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(cell('tod')).toBe('09:30:15');
   });
 });

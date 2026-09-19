@@ -45,8 +45,10 @@ export const CONTINUOUS_LEVELS = 254;
  * @param {any[]} [input.yCats]              y holds codes into this category list
  * @param {any[]} [input.fillCats]           fill holds codes into this category list
  * @param {boolean} [input.continuous]       treat `fill` as numbers and split them into CONTINUOUS_LEVELS steps
- * @param {{x?: boolean, y?: boolean, fill?: boolean}} [input.dates]
- *                                           these columns hold epoch milliseconds that stand for dates
+ * @param {{x?: string|boolean, y?: string|boolean, r?: string|boolean, fill?: string|boolean}} [input.dates]
+ *                                           these columns hold epoch milliseconds that stand for dates. The value is
+ *                                           the SQL type ('DATE', 'TIMESTAMP', 'TIME', ...) when it is known, so the
+ *                                           tooltip can format each kind its own way, or just true when it isn't.
  * @param {'-r'|null} [input.sort]           draw order: '-r' draws big dots first
  * @param {number} [input.maxCategories]     most categories grouped here from plain values (254 at most, one byte)
  * @param {boolean} [input.wantP25]          also pass along the 25th percentile of the radii, so Plot's
@@ -59,8 +61,10 @@ export function prepare({ x, y, r = null, fill = null, xCats = null, yCats = nul
   const temp = factorize ? new Uint16Array(total) : null;
   const seen = factorize ? new Map() : null;
   let fmin = Infinity, fmax = -Infinity;
-  const xDates = !!dates.x || holdsDates(x);
-  const yDates = !!dates.y || holdsDates(y);
+  // Array data has no SQL type, so a column of Date objects counts as dates with no kind.
+  const xDates = dates.x || holdsDates(x);
+  const yDates = dates.y || holdsDates(y);
+  const rDates = r ? dates.r || holdsDates(r) : false;
   maxCategories = Math.min(254, maxCategories);
 
   let count = 0;
@@ -238,7 +242,7 @@ export function prepare({ x, y, r = null, fill = null, xCats = null, yCats = nul
     xCats,
     yCats,
     continuous,
-    dates: { x: xDates, y: yDates, fill: !!dates.fill },
+    dates: { x: xDates, y: yDates, r: rDates, fill: dates.fill || false },
     levels,
     hints,
     k,
