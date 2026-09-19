@@ -1,59 +1,57 @@
 # Roadmap
 
-Work that is known and not yet done. Each item says what goes wrong, when it is worth doing, and a sketch of the fix.
+Known work that isn't done yet.
 
-## The paint budget counts dots that are off screen
+## Zoom frames count dots that are off screen
 
-**Problem.** `estimateFragments` (`src/painters/gl.js`) multiplies the dot area by every uploaded dot. When you zoom far into a dense plot, most dots are outside the frame, but the estimate still goes over `fragmentBudget`, so zoom frames draw at a lower resolution than they need.
+`estimateFragments` in `src/painters/gl.js` counts every uploaded dot, including the ones outside the frame. Zoomed far into a dense plot, the estimate goes over `fragmentBudget` even when few dots are on screen, so zoom frames draw blurrier than they need to.
 
-**Act when** someone sees blurry zoom frames on a zoomed-in plot that has few dots on screen.
+Fix: estimate from the share of the data range that is on screen (the scale domain against `prep.extent`), or from how many dots the last frame drew inside the frame.
 
-**Sketch.** Estimate from the share of the data range that is on screen (the scale domain against `prep.extent`), or from how many dots the last frame put inside the frame.
+## Zoom frames never drop below pixel ratio 1
 
-## Lower resolution while zooming stops at pixel ratio 1
+Reduced zoom frames stop at pixel ratio 1 (`MIN_REDUCED_DPR` in `src/painters/gl.js`). On a 1x screen, or at 2M+ rows with large dots, a zoom frame still paints hundreds of millions of pixels.
 
-**Problem.** The reduced zoom frame never goes below pixel ratio 1 (`MIN_REDUCED_DPR`). On a 1x screen, or at 2M+ rows with large dots, a zoom frame still paints hundreds of millions of pixels.
+Fix: measure frames per second at 2M+ rows with `MIN_REDUCED_DPR` at 1 and at 0.5. If 0.5 is clearly faster, use it.
 
-**Act when** zoom speed at 2M+ rows is a complaint. Measure frames per second at `MIN_REDUCED_DPR` 1 and 0.5 first.
+## Copying the picture into each plot waits for the graphics card
 
-**Sketch.** Lower `MIN_REDUCED_DPR` to 0.5 if the measurement shows a clear gain.
+`blitTo` in `src/shared-gl.js` copies the shared WebGL canvas into each plot with `drawImage`, and that call waits for the graphics card to finish the frame. When a brush redraws several plots at once, each copy waits in turn.
 
-## Copying the picture waits for the graphics card
+Fix: first read `mark.stats.blitMs` with `benchmark` off on a page with many plots. If it reads tens of milliseconds, draw every plot that needs redrawing before copying any of them.
 
-**Problem.** `blitTo` (`src/shared-gl.js`) copies the shared WebGL canvas into each plot with `drawImage`, which makes the page wait until the graphics card has finished the frame. When several plots redraw in the same frame (a brush that filters them all), each copy waits in turn.
+## Text axes break with an explicit domain or a shared scale
 
-**Act when** `mark.stats.blitMs` reads tens of milliseconds on pages with several plots.
+A text axis places category i on a straight line through the pixels Plot gave the category rows (`categoryLine` in `src/scale-map.js`). An explicit domain that drops or reorders categories, or a second mark that adds values to the same scale, breaks that line and the mark throws.
 
-**Sketch.** Read `blitMs` with `benchmark` off on a many-plot page. If the wait dominates, try `bitmaprenderer` per plot, or draw every plot that redraws in one frame before copying any of them.
+Fix: upload a table of positions, one per category, as a small texture the way the palette is uploaded, and look positions up in the shader. Categories missing from the domain get a hidden position.
 
-## Category axes need Plot's own even spacing
+## Text axes don't shrink under a cross-filter
 
-**Problem.** A text axis places category code i on the straight line through Plot's pixels for the category rows (`categoryLine` in `src/scale-map.js`). An explicit domain that leaves out categories or reorders them, or another mark that adds values to the same scale, breaks that line, and the mark throws.
+Categories are fetched once per table, from the whole table. When a cross-filter narrows the rows, a text axis still keeps a slot for every value. `vg.dot`'s axis shrinks to the values left.
 
-**Act when** someone needs an explicit domain on a text axis, or a second mark sharing it.
+Fix: keep the codes from the whole table so colors stay the same, but pass Plot only the categories in the current result.
 
-**Sketch.** Upload a per-code position table as a small texture, the same way the palette works, and look positions up in the shader. Codes missing from the domain get a hidden position.
+## Picking is slow with thousands of huge dots
 
-## Text axes keep every category under a cross-filter
+Picking keeps up to 4096 of the largest dots in a list it checks one by one. With more than 4096 dots whose radius is bigger than the frame diagonal, next to a dense patch of small dots, one pick checks every dot in the patch, which takes about 150 ms. Plot's default radius range stops at 30 px, so this only happens with an explicit `rRange` or data far outside `rDomain`.
 
-**Problem.** The category list comes from the whole table, once per table. When a cross-filter narrows the rows, a text axis still shows a slot for every value; `vg.dot`'s axis shrinks to the values left.
+Fix: a second grid for the large dots, with cells sized to their radius.
 
-**Act when** someone asks for a text axis that follows a filter.
+## The tooltip only comes back once the plot holds still
 
-**Sketch.** Keep the codes from the whole table, and pass Plot only the categories present in the current result (the codes that occur), so the axis shrinks while colors stay stable.
+After every redraw the tip waits for the plot to hold still for 150 ms before it picks again. A plot that redraws on every pointer move, such as a crosshair driven by a Param, shows the tip only when the pointer stops.
 
-## Picking slows down with thousands of dots larger than the frame
+Fix: reuse the pick index across redraws that don't change the scales, the frame or the data.
 
-**Problem.** Picking keeps up to 4096 of the largest dots in a list it checks one by one, and bounds its search by the largest remaining radius. With more than 4096 dots whose radius is larger than the frame diagonal, next to a dense patch of small dots, a pick checks every dot in that patch, about 150 ms.
+## Tooltip dates always read in UTC
 
-**Act when** a real dataset shows slow hovers with huge dots. Plot's default radius range stops at 30 px, so this needs an explicit `rRange` or data far outside `rDomain`.
+A `TIMESTAMPTZ` shows in UTC with a `Z`, not in the viewer's time zone, and a plain `TIMESTAMP` shows no zone at all (`src/tip.js`).
 
-**Sketch.** Keep a second grid for the large dots with cells sized to their radius.
+Fix: an option to show timestamps in the viewer's time zone.
 
-## The tooltip waits for a still plot
+## The tooltip ignores d3 format strings
 
-**Problem.** After every redraw the tip waits until the plot has held still for 150 ms before it picks again. A plot that redraws on every pointer move (a crosshair driven by a Param) shows the tip only when the pointer rests.
+Setting `xTickFormat`, `yTickFormat` or `colorTickFormat` to a function formats both the axis and the tooltip. Setting one to a d3 format string formats only the axis. The tooltip falls back to its own formatting, because turning the string into a function needs `d3-format` and `d3-time-format`, which this package doesn't depend on.
 
-**Act when** someone combines `tip` with an interactor that redraws on pointer moves.
-
-**Sketch.** Reuse the pick index across redraws whose scales, frame and data are unchanged.
+Fix: add those two as dependencies and turn the string into a function the way Plot does: `utcFormat` for a time scale, `format` for everything else.
