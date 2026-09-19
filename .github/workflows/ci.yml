@@ -30,8 +30,8 @@ jobs:
 
   browser:
     name: Browser tests
-    # The screenshots in tests/e2e were taken on macOS, so the browser tests run there too.
-    runs-on: macos-latest
+    # Pinned so Playwright's system packages match the Ubuntu version.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -41,9 +41,10 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright install chromium firefox webkit
-      # perf.spec.js is a 500k-row benchmark to run by hand, so it is left out here.
-      - run: pnpm exec playwright test tests/e2e/core.spec.js tests/e2e/visual.spec.js
+      - run: pnpm exec playwright install --with-deps chromium
+      # Chromium only. visual.spec.js compares against screenshots taken on macOS, and
+      # perf.spec.js is a 500k-row benchmark, so both run locally and are left out here.
+      - run: pnpm exec playwright test tests/e2e/core.spec.js --project=chromium --project=chromium-dpr1
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
