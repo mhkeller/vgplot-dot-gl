@@ -134,13 +134,15 @@ describe('prepare: review fixes', () => {
 
 
 describe('prepare: fill modes', () => {
-  it('uses precomputed codes and rejects codes outside the category list', () => {
+  it('uses precomputed codes, rejects codes outside the category list, and hints only the categories present', () => {
     const p = prepare({ x: [1, 2, 3, 4], y: [1, 2, 3, 4], fill: Uint8Array.from([0, 2, 255, 7]), fillCats: ['a', 'b', 'c'] });
     expect(Array.from(p.codes)).toEqual([0, 2, 255, 255]);
     expect(p.hidden).toBe(255);
     expect(p.n).toBe(2);
+    // Codes still point into the full list; the legend gets only the categories in the result.
     expect(p.cats).toEqual(['a', 'b', 'c']);
-    expect(p.hints.fill).toEqual(['a', 'b', 'c']);
+    expect(p.hints.fill).toEqual(['a', 'c']);
+    expect(Array.from(p.fillRows)).toEqual([0, -1, 1]);
   });
 
   it('uses two-byte codes with 65535 as the hidden code above 254 fill categories', () => {
@@ -152,8 +154,10 @@ describe('prepare: fill modes', () => {
     expect(Array.from(p.codes)).toEqual([0, 299, 65535, 150, 65535]);
     expect(p.n).toBe(3);
     expect(p.levels).toBe(300);
-    expect(p.k).toBe(300);
-    expect(p.hints.fill[299]).toBe('c299');
+    // The row with no x isn't drawn, but its category counts, as it does when Plot reads the column.
+    expect(p.k).toBe(4);
+    expect(p.hints.fill).toEqual(['c0', 'c12', 'c150', 'c299']);
+    expect(p.fillRows[299]).toBe(3);
   });
 
   it('splits a number fill into 254 steps between its lowest and highest value', () => {
@@ -178,14 +182,14 @@ describe('prepare: fill modes', () => {
 });
 
 describe('prepare: category axes and dates', () => {
-  it('gives a code axis its category list as hints and the code range as its extent', () => {
+  it('gives a code axis its category list as hints when every category is in the result', () => {
     const x = Uint8Array.from([0, 2, 1, 255, 2]);
     const y = Uint16Array.from([1, 0, 0, 1, 65535]);
     const p = prepare({ x, y, xCats: ['a', 'b', null], yCats: ['no', 'yes'] });
     expect(p.n).toBe(3);
     expect(Array.from(p.perm)).toEqual([0, 1, 2]);
-    expect(p.extent.x).toEqual([0, 2]);
-    expect(p.extent.y).toEqual([0, 1]);
+    expect(p.extent.x).toBeNull();
+    expect(p.extent.y).toBeNull();
     expect(p.k).toBe(3);
     expect(p.hints.x).toEqual(['a', 'b', null]);
     // Padded to k by repeating the last entry, so Plot sees the same list.
@@ -195,13 +199,46 @@ describe('prepare: category axes and dates', () => {
 
   it('makes k cover the longest category list and keeps null last in the padded hints', () => {
     const xCats = Array.from({ length: 40 }, (_, i) => `x${i}`).concat([null]);
-    const p = prepare({ x: Uint8Array.from([40, 3]), y: [-1, 2], xCats, r: [1, 2], wantP25: true });
+    const x = Uint8Array.from({ length: 41 }, (_, i) => 40 - i);
+    const y = Array.from({ length: 41 }, (_, i) => (i === 0 ? -1 : 2));
+    const p = prepare({ x, y, xCats, r: Array.from({ length: 41 }, (_, i) => 1 + (i % 2)), wantP25: true });
     expect(p.k).toBe(41);
     expect(p.hints.x.at(-1)).toBeNull();
     expect(p.hints.x.slice(0, 41)).toEqual(xCats);
     // A code axis has no log-scale slot; y still gets its smallest positive value first.
     expect(p.hints.y[0]).toBe(2);
     expect(p.hints.y[p.k - 1]).toBe(-1);
+  });
+
+  it('hints only the categories in the result, in list order, counting rows that are not drawn', () => {
+    const xCats = ['a', 'b', 'c', 'd', null];
+    // Rows: a, d, null, and c with no y (not drawn, but Plot still puts c on the axis), plus a hidden code.
+    const x = Uint8Array.from([3, 0, 4, 2, 255]);
+    const y = Float64Array.from([1, 2, 3, NaN, 5]);
+    const p = prepare({ x, y, xCats });
+    expect(p.n).toBe(3);
+    expect(p.hints.x.slice(0, 4)).toEqual(['a', 'c', 'd', null]);
+    expect(p.k).toBe(4);
+    // Codes and the list stay in full-list terms, which the tooltip and the painters read.
+    expect(p.xCats).toEqual(xCats);
+    expect(p.fillRows).toBeNull();
+  });
+
+  it('hints no categories for an empty result, so an axis another mark shares gets no extra slot', () => {
+    const p = prepare({ x: new Uint8Array(0), y: new Float64Array(0), xCats: ['a', 'b'], fill: new Uint8Array(0), fillCats: ['p', 'q'] });
+    expect(p.n).toBe(0);
+    expect(p.hints.x).toEqual([]);
+    expect(p.hints.fill).toEqual([]);
+    expect(Array.from(p.fillRows)).toEqual([-1, -1]);
+  });
+
+  it('counts the fill of rows that are not drawn, as Plot does for the color domain', () => {
+    const continuous = prepare({ x: [NaN, 1, 2], y: [1, 2, 3], fill: [100, 0, 10], continuous: true });
+    expect(continuous.extent.fill).toEqual([0, 100]);
+    expect(continuous.n).toBe(2);
+    const grouped = prepare({ x: [null, 1, 2], y: [1, 2, 3], fill: ['Z', 'A', 'B'] });
+    expect(grouped.cats).toEqual(['A', 'B', 'Z']);
+    expect(Array.from(grouped.codes)).toEqual([255, 0, 1]);
   });
 
   it('turns epoch-millisecond columns flagged as dates into Date hints', () => {

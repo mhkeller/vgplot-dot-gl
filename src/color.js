@@ -38,16 +38,20 @@ function resolveCSS(str, context) {
  * A palette from the colors Plot gave the category rows, for up to 65,535
  * categories. Entry i is the color of category i. It is laid out in rows of 256
  * (row i / 256 of a 256×256 texture), and has as many rows as the categories
- * need. Unused entries stay transparent, which also hides rows whose category is
- * not in the color domain; those category numbers are pushed onto `missing` so
- * the caller can say so, since dots drawn invisible give no other sign.
+ * need. `hintRows[i]` is the hint row that has category i, or -1 when the data
+ * doesn't have it; without `hintRows`, row i has category i. Unused entries stay
+ * transparent, which also hides rows whose category is not in the color domain;
+ * those category numbers are pushed onto `missing` so the caller can say so,
+ * since dots drawn invisible give no other sign.
  */
-export function paletteFromValues(fillValues, count, missing) {
-  const n = Math.min(count, 65535, fillValues.length);
+export function paletteFromValues(fillValues, count, missing, hintRows = null) {
+  const n = Math.min(count, 65535);
   const rows = Math.max(1, Math.ceil(n / 256));
   const out = new Uint8Array(256 * rows * 4);
   for (let i = 0; i < n; ++i) {
-    const c = parse(fillValues[i])?.rgb();
+    const row = hintRows ? hintRows[i] : i;
+    if (!(row >= 0 && row < fillValues.length)) continue;
+    const c = parse(fillValues[row])?.rgb();
     if (!c) {
       missing?.push(i);
       continue;

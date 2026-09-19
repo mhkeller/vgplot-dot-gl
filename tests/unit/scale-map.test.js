@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import { scaleLinear, scaleLog, scaleSqrt, scalePow, scaleSymlog } from 'd3-scale';
 import * as Plot from '@observablehq/plot';
-import { transformFor, affine, axisAffine, categoryLine, project } from '../../src/scale-map.js';
+import { transformFor, affine, axisAffine, axisTransform, categoryAxis, samePlaces, project } from '../../src/scale-map.js';
 
 const cases = [
   { name: 'linear', desc: { type: 'linear', domain: [10, 250], range: [40, 600] }, d3: () => scaleLinear() },
@@ -58,24 +58,31 @@ describe('scale-map matches d3', () => {
 describe('scale-map: category axes', () => {
   const cats = ['a', 'b', 'c', 'd', 'e', null];
 
-  /** Plot's x scale and the pixels it gives hint rows 0..cats.length - 1, the way DotGLMark.render receives them. */
-  function renderCategories(options = {}, extraMarks = []) {
-    let seen;
-    const hints = cats.concat([null, null]);
+  /** Plot's x scale for a dot mark given `hints`, the way DotGLMark.render receives it. */
+  function renderCategories(options = {}, extraMarks = [], hints = cats.concat([null, null])) {
+    let sx;
     Plot.plot({
       document, width: 640, height: 200, ...options,
       marks: [
         ...extraMarks,
         Plot.dot({ length: hints.length }, {
           x: hints,
-          render: (index, scales, values) => {
-            seen = { sx: scales.scales.x, positions: values.x };
+          render: (index, scales) => {
+            sx = scales.scales.x;
             return document.createElementNS('http://www.w3.org/2000/svg', 'g');
           }
         })
       ]
     });
-    return seen;
+    return sx;
+  }
+
+  /** Checks that the line through each category's place lands where Plot puts that category. */
+  function expectPlotPlaces(sx, list) {
+    const axis = categoryAxis(sx, list);
+    const middle = sx.type === 'band' ? sx.bandwidth / 2 : 0;
+    list.forEach((cat, i) => expect(axis.a * axis.pos[i] + axis.b).toBeCloseTo(sx.apply(cat) + middle, 6));
+    return axis;
   }
 
   const layouts = {
@@ -83,27 +90,66 @@ describe('scale-map: category axes', () => {
     reversed: { x: { reverse: true } },
     inset: { x: { inset: 12 } },
     'descending range': { x: { range: [600, 40] } },
-    band: { x: { type: 'band' } }
+    band: { x: { type: 'band' } },
+    'reversed band': { x: { type: 'band', reverse: true } }
   };
   for (const [name, options] of Object.entries(layouts)) {
     it(`places every category where Plot does: ${name}`, () => {
-      const { sx, positions } = renderCategories(options);
-      expect(sx.type).toBe(name === 'band' ? 'band' : 'point');
-      const line = categoryLine(sx, positions, cats.length, 'x');
-      const middle = sx.type === 'band' ? sx.bandwidth / 2 : 0;
-      cats.forEach((cat, i) => expect(line.a * i + line.b).toBeCloseTo(sx.apply(cat) + middle, 6));
+      const sx = renderCategories(options);
+      expect(sx.type).toBe(name.includes('band') ? 'band' : 'point');
+      const axis = expectPlotPlaces(sx, cats);
+      // Plot's reverse option reverses the domain, so the places count from the other end.
+      expect(Array.from(axis.pos)).toEqual(cats.map(c => sx.domain.indexOf(c)));
     });
   }
 
-  it('throws when the categories are not evenly spaced', () => {
-    const shared = renderCategories({}, [Plot.ruleX(['aa', 'zz'])]);
-    expect(() => categoryLine(shared.sx, shared.positions, cats.length, 'x')).toThrow(/the x axis doesn't place its categories evenly/);
+  it('places the categories of a domain that has more than the data: an explicit domain, or another mark on the axis', () => {
     const explicit = renderCategories({ x: { domain: ['a', 'q', 'b', 'c', 'd', 'e', null] } });
-    expect(() => categoryLine(explicit.sx, explicit.positions, cats.length, 'x')).toThrow(/evenly/);
+    expect(Array.from(expectPlotPlaces(explicit, cats).pos)).toEqual([0, 2, 3, 4, 5, 6]);
+    const shared = renderCategories({}, [Plot.ruleX(['aa', 'zz'])]);
+    expectPlotPlaces(shared, cats);
+    // A filtered layer whose data skips 'b' and 'd', over an axis that still lists them.
+    const layered = renderCategories({}, [Plot.dot(cats, { x: d => d })], ['a', 'c', 'e', null]);
+    expect(Array.from(expectPlotPlaces(layered, cats).pos)).toEqual([0, 1, 2, 3, 4, 5]);
   });
 
-  it('handles a single category', () => {
-    expect(categoryLine({ type: 'point' }, [320, 320], 1, 'x')).toEqual({ a: 0, b: 320 });
+  it('gives NaN to a category the domain leaves out, so its dots are not drawn', () => {
+    const sx = renderCategories({ x: { domain: ['e', 'a'] } });
+    const axis = categoryAxis(sx, cats);
+    expect(Array.from(axis.pos)).toEqual([1, NaN, NaN, NaN, 0, NaN]);
+    const tx = axisTransform(sx, axis, 'x');
+    expect(axis.a * tx(4) + axis.b).toBeCloseTo(sx.apply('e'), 6);
+    expect(tx(1)).toBeNaN();
+    // The hidden code is past the end of the list.
+    expect(tx(255)).toBeNaN();
+  });
+
+  it('handles a single category and an empty domain', () => {
+    const one = renderCategories({}, [], ['c', 'c']);
+    const axis = categoryAxis(one, cats);
+    expect(axis.a).toBe(0);
+    expect(axis.b).toBeCloseTo(one.apply('c'), 6);
+    expect(Array.from(axis.pos)).toEqual([NaN, NaN, 0, NaN, NaN, NaN]);
+    expect(categoryAxis({ type: 'point', domain: [], apply: () => undefined }, ['a'])).toEqual({ a: 0, b: 0, pos: Float64Array.from([NaN]) });
+  });
+
+  it('places no category on a number scale, which Plot picks when only the empty value is left', () => {
+    // Plot's dot drops every row here and skips render, so read the scale off the figure.
+    const sx = Plot.plot({ document, marks: [Plot.dot({ length: 2 }, { x: [null, null] })] }).scale('x');
+    expect(sx.type).toBe('linear');
+    expect(Array.from(categoryAxis(sx, cats).pos).every(Number.isNaN)).toBe(true);
+  });
+
+  it('uses the scale\'s curve for an axis that is not drawn from category codes', () => {
+    const desc = { type: 'log', domain: [1, 100], range: [0, 100] };
+    expect(axisTransform(desc, null, 'x')(10)).toBe(Math.log(10));
+  });
+
+  it('compares place tables entry by entry, NaN included', () => {
+    expect(samePlaces(null, null)).toBe(true);
+    expect(samePlaces(Float64Array.from([0, NaN]), Float64Array.from([0, NaN]))).toBe(true);
+    expect(samePlaces(Float64Array.from([0, 1]), Float64Array.from([0, NaN]))).toBe(false);
+    expect(samePlaces(Float64Array.from([0]), null)).toBe(false);
   });
 
   it('builds the per-frame line from a category line with a center and a shift', () => {

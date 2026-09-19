@@ -25,6 +25,10 @@ function stubbed(mark) {
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
+/** The hint values a plot spec gives Plot for one of the mark's channels. */
+const HINT_NAMES = { x: 'dotglX', y: 'dotglY', r: 'dotglR', fill: 'dotglFill' };
+const hint = (options, name) => options.channels[HINT_NAMES[name]]?.value;
+
 /**
  * A coordinator that answers the two kinds of query prepare() sends: Mosaic's DESC of a
  * column (from `types`, keyed by the column's SQL) and the mark's DISTINCT (from `distinct`,
@@ -83,8 +87,10 @@ describe('DotGLMark', () => {
     expect(d).toEqual({ length: 8 });
     expect(options.sort).toBeNull();
     expect(typeof options.render).toBe('function');
-    expect(options.x).toHaveLength(8);
-    expect(options.fill).toEqual({ value: ['D', 'I', 'R', 'R', 'R', 'R', 'R', 'R'], scale: 'color' });
+    expect(hint(options, 'x')).toHaveLength(8);
+    // Plot's row filter is off for the hints, so render runs whatever the domains leave out.
+    expect(options.channels.dotglFill).toEqual({ value: ['D', 'I', 'R', 'R', 'R', 'R', 'R', 'R'], scale: 'color', filter: null });
+    expect(options.x).toBeUndefined();
     expect(options.opacity).toBe(0.6);
     expect(options.clip).toBe(true);
     expect(mark.data.columns.size.length).toBe(3000);
@@ -124,7 +130,7 @@ describe('DotGLMark', () => {
     const [{ data: d, options }] = mark.plotSpecs();
     Plot.plot({ document, width: 640, height: 400, color: { domain: ['R', 'D', 'I'], range: ['red', 'blue', 'gray'] }, marks: [Plot.dot(d, options)] });
     expect(seen.scales.scales.x.type).toBe('linear');
-    expect(seen.values.fill).toEqual(['blue', 'gray', 'red']);
+    expect(seen.values.dotglFill).toEqual(['blue', 'gray', 'red']);
   });
 
   it('survives destroy and renders nothing afterwards', () => {
@@ -188,7 +194,7 @@ describe('DotGLMark: more review fixes', () => {
     const rows = [{ size: 1, price: null, party: 'D' }, { size: 2, price: null, party: 'D' }];
     const mark = stubbed(new DotGLMark(rows, { x: 'size', y: 'price' }));
     const [{ data: d, options }] = mark.plotSpecs();
-    expect(options.y.every(v => v === undefined)).toBe(true);
+    expect(hint(options, 'y').every(v => v === undefined)).toBe(true);
     const fig = Plot.plot({ document, width: 640, height: 400, y: { type: 'log' }, marks: [Plot.dot(d, options)] });
     expect(fig.scale('y').domain).toEqual([1, 10]);
     expect(fig.scale('x').domain).toEqual([1, 2]);
@@ -231,7 +237,7 @@ describe('DotGLMark: fill modes', () => {
     // What prepare() would have produced for the categories ['D', 'R'].
     mark.categories.set('party', { cats: ['D', 'R'] });
     const [{ data: d, options }] = mark.plotSpecs();
-    expect(options.fill).toEqual({ value: ['D', 'R'], scale: 'color' });
+    expect(hint(options, 'fill')).toEqual(['D', 'R']);
     expect(Array.from(mark.prep.codes)).toEqual([1, 0, 255]);
     expect(mark.prep.n).toBe(2);
     expect(d).toEqual({ length: 2 });
@@ -243,7 +249,7 @@ describe('DotGLMark: fill modes', () => {
     // What prepare() reads from Mosaic's field info.
     mark.channelField('fill').type = 'number';
     const [{ data: d, options }] = mark.plotSpecs();
-    expect(options.fill.value.slice(0, 2)).toEqual([-1, 1]);
+    expect(hint(options, 'fill').slice(0, 2)).toEqual([-1, 1]);
     expect(mark.prep.continuous).toBe(true);
     expect(mark.prep.levels).toBe(254);
     expect(mark.prep.codes[0]).toBe(0);
@@ -440,7 +446,7 @@ describe('DotGLMark: categories', () => {
     const mark = await prepared({ x: 'party', y: 'price' }, types, { party: ['R', 'D'] });
     const again = mark.prepare();
     mark.queryResult([{ party: 1, price: 1 }, { party: 0, price: 2 }]);
-    expect(mark.plotSpecs()[0].options.x).toEqual(['D', 'R']);
+    expect(hint(mark.plotSpecs()[0].options, 'x')).toEqual(['D', 'R']);
     await again;
   });
 
@@ -462,7 +468,6 @@ describe('DotGLMark: categories', () => {
     const text = ['R', null, 'D', 'I', 'R'];
     mark.data = { numRows: 5, columns: { party: Uint8Array.from([2, 3, 0, 1, 2]), price: Float64Array.from([1, 2, 3, 4, 5]) } };
     const [{ data: d, options }] = mark.plotSpecs();
-    expect(mark.prep.extent.x).toEqual([0, 3]);
     const hinted = Plot.plot({ document, width: 640, height: 400, marks: [Plot.dot(d, options)] });
     const full = Plot.plot({ document, width: 640, height: 400, marks: [Plot.dot({ length: 5 }, { x: text, y: [1, 2, 3, 4, 5] })] });
     expect(hinted.scale('x').type).toBe('point');
@@ -471,48 +476,125 @@ describe('DotGLMark: categories', () => {
   });
 });
 
+/**
+ * Draws `rows` ({ x, y, fill }) with a dotGL mark on a text x and a text or boolean fill, and the same rows with
+ * Plot's own dot, and checks that every square sits on its circle in its color. `table` has the whole table's
+ * categories, which the mark reads before any query; the rows can use only some of them, as a filtered result does.
+ * `extra` marks are drawn under both, and `plotOptions` go to both plots. Returns both plots.
+ */
+async function expectPlotDots({ rows, table, plotOptions = {}, extra = [], fillType = 'VARCHAR' }) {
+  const mark = await prepared(
+    { x: 'letter', y: 'price', fill: 'name' },
+    { '"letter"': 'VARCHAR', '"price"': 'DOUBLE', '"name"': fillType },
+    { letter: table.letters, name: table.names.map(v => (v == null ? v : String(v))) }
+  );
+  const xCats = mark.categories.get('letter').cats;
+  const fillCats = mark.categories.get('name').cats;
+  const Codes = fillCats.length > 254 ? Uint16Array : Uint8Array;
+  mark.data = {
+    numRows: rows.length,
+    columns: {
+      letter: Uint8Array.from(rows, r => xCats.indexOf(r.x)),
+      price: Float64Array.from(rows, r => r.y),
+      name: Codes.from(rows, r => fillCats.indexOf(r.fill))
+    }
+  };
+
+  // jsdom has no 2D canvas, so record the squares the rect2d painter fills.
+  const squares = [];
+  const ctx = { setTransform() {}, clearRect() {}, fillRect(x, y, w, h) { squares.push({ x: x + w / 2, y: y + h / 2, fill: this.fillStyle }); } };
+  const canvas2d = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(type => (type === '2d' ? ctx : null));
+  let drawn;
+  try {
+    const [{ data: d, options }] = mark.plotSpecs();
+    drawn = Plot.plot({ document, width: 640, height: 400, ...plotOptions, marks: [...extra, Plot.dot(d, options)] });
+  } finally {
+    canvas2d.mockRestore();
+  }
+
+  const full = Plot.plot({
+    document, width: 640, height: 400, ...plotOptions,
+    marks: [...extra, Plot.dot(rows, { x: 'x', y: 'y', fill: { value: r => r.fill, scale: 'color' } })]
+  });
+  // A value the color domain leaves out is painted fully transparent; Plot's dot leaves it out.
+  squares.splice(0, squares.length, ...squares.filter(s => color(s.fill).opacity > 0));
+  const groups = full.querySelectorAll('g[aria-label="dot"]');
+  const circles = [...groups[groups.length - 1].querySelectorAll('circle')];
+  const [, tx, ty] = circles[0].parentNode.getAttribute('transform').match(/translate\(([\d.]+),([\d.]+)\)/).map(Number);
+  expect(squares).toHaveLength(circles.length);
+  circles.forEach((c, i) => {
+    expect(squares[i].x).toBeCloseTo(+c.getAttribute('cx') + tx, 6);
+    expect(squares[i].y).toBeCloseTo(+c.getAttribute('cy') + ty, 6);
+    expect(color(squares[i].fill).formatHex()).toBe(color(c.getAttribute('fill')).formatHex());
+  });
+  expect(drawn.scale('x').domain).toEqual(full.scale('x').domain);
+  expect(drawn.scale('color').domain).toEqual(full.scale('color').domain);
+  return { mark, drawn, full, squares };
+}
+
 describe('DotGLMark: drawing', () => {
+  const letters = ['a', 'b', 'c', 'd', null];
+  const names = Array.from({ length: 300 }, (_, i) => `f${String(i).padStart(3, '0')}`);
+  const table = { letters, names };
+  const allRows = Array.from({ length: 600 }, (_, i) => ({ x: letters[i % 5], y: (i * 37) % 101, fill: names[(i * 7) % 300] }));
+  // A filter that removes every row with letter 'b' and every name from f100 up.
+  const filtered = allRows.filter(r => r.x !== 'b' && r.fill < 'f100');
+
   it("draws a text x with a null and a 300-value fill where Plot's own dots go, in their colors", async () => {
-    const letters = ['a', 'b', 'c', 'd', null];
-    const names = Array.from({ length: 300 }, (_, i) => `f${String(i).padStart(3, '0')}`);
-    const n = 600;
-    const X = Array.from({ length: n }, (_, i) => letters[i % 5]);
-    const Y = Array.from({ length: n }, (_, i) => (i * 37) % 101);
-    const F = Array.from({ length: n }, (_, i) => names[(i * 7) % 300]);
+    const { mark } = await expectPlotDots({ rows: allRows, table });
+    expect(mark.prep.codes).toBeInstanceOf(Uint16Array);
+  });
+
+  it('drops the categories a filter removed from the axis and the legend, as Plot does for the same rows', async () => {
+    const { drawn } = await expectPlotDots({ rows: filtered, table });
+    expect(drawn.scale('x').domain).toEqual(['a', 'c', 'd', null]);
+    expect(drawn.scale('color').domain).toHaveLength(new Set(filtered.map(r => r.fill)).size);
+  });
+
+  it('keeps every category on an axis and legend the page fixed, such as vg.Fixed does', async () => {
+    const { drawn } = await expectPlotDots({ rows: filtered, table, plotOptions: { x: { domain: letters }, color: { domain: names } } });
+    expect(drawn.scale('x').domain).toEqual(letters);
+  });
+
+  it('draws a filtered layer on an axis that an unfiltered layer shares', async () => {
+    const extra = [Plot.dot(allRows, { x: 'x', y: 'y', fill: '#ddd' })];
+    const { drawn } = await expectPlotDots({ rows: filtered, table, extra });
+    expect(drawn.scale('x').domain).toEqual(letters);
+  });
+
+  it('draws the rows a partial domain keeps, even when no hint row fits every domain', async () => {
+    // Row 2 is ('c', 'f014'). The hints pair 'c' with 'f002', which the color domain leaves out.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { squares } = await expectPlotDots({ rows: allRows, table, plotOptions: { x: { domain: ['c'] }, color: { domain: ['f014'] } } });
+      expect(squares).toHaveLength(2);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('adds nothing to an axis or legend another mark shares when a filter leaves no rows', async () => {
     const mark = await prepared(
       { x: 'letter', y: 'price', fill: 'name' },
       { '"letter"': 'VARCHAR', '"price"': 'DOUBLE', '"name"': 'VARCHAR' },
-      { letter: letters, name: names }
+      { letter: letters, name: ['p', 'q'] }
     );
-    const xCats = mark.categories.get('letter').cats;
-    const fillCats = mark.categories.get('name').cats;
-    mark.data = {
-      numRows: n,
-      columns: { letter: Uint8Array.from(X, v => xCats.indexOf(v)), price: Float64Array.from(Y), name: Uint16Array.from(F, v => fillCats.indexOf(v)) }
-    };
+    mark.data = { numRows: 0, columns: { letter: new Uint8Array(0), price: new Float64Array(0), name: new Uint8Array(0) } };
+    const [{ data: d, options }] = mark.plotSpecs();
+    const other = Plot.dot([{ x: 'a', f: 'p' }, { x: 'c', f: 'q' }], { x: 'x', y: () => 1, fill: 'f' });
+    const fig = Plot.plot({ document, marks: [other, Plot.dot(d, options)] });
+    expect(fig.scale('x').domain).toEqual(['a', 'c']);
+    expect(fig.scale('color').domain).toEqual(['p', 'q']);
+  });
 
-    // jsdom has no 2D canvas, so record the squares the rect2d painter fills.
-    const squares = [];
-    const ctx = { setTransform() {}, clearRect() {}, fillRect(x, y, w, h) { squares.push({ x: x + w / 2, y: y + h / 2, fill: this.fillStyle }); } };
-    const canvas2d = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(type => (type === '2d' ? ctx : null));
-    try {
-      const [{ data: d, options }] = mark.plotSpecs();
-      Plot.plot({ document, width: 640, height: 400, marks: [Plot.dot(d, options)] });
-    } finally {
-      canvas2d.mockRestore();
-    }
-    expect(mark.prep.codes).toBeInstanceOf(Uint16Array);
-
-    const full = Plot.plot({ document, width: 640, height: 400, marks: [Plot.dot({ length: n }, { x: X, y: Y, fill: { value: F, scale: 'color' } })] });
-    const circles = [...full.querySelectorAll('circle')];
-    const [, tx, ty] = circles[0].parentNode.getAttribute('transform').match(/translate\(([\d.]+),([\d.]+)\)/).map(Number);
-    expect(squares).toHaveLength(n);
-    expect(circles).toHaveLength(n);
-    circles.forEach((c, i) => {
-      expect(squares[i].x).toBeCloseTo(+c.getAttribute('cx') + tx, 6);
-      expect(squares[i].y).toBeCloseTo(+c.getAttribute('cy') + ty, 6);
-      expect(color(squares[i].fill).formatHex()).toBe(color(c.getAttribute('fill')).formatHex());
-    });
+  it('colors a boolean fill by value, as vg.dot does, so filtering out false leaves true its color', async () => {
+    const booleans = { letters, names: [false, true] };
+    const rows = allRows.map((r, i) => ({ ...r, fill: i % 3 === 0 }));
+    const both = await expectPlotDots({ rows, table: booleans, fillType: 'BOOLEAN' });
+    expect(both.mark.categories.get('name').cats).toEqual([false, true]);
+    const onlyTrue = await expectPlotDots({ rows: rows.filter(r => r.fill), table: booleans, fillType: 'BOOLEAN' });
+    const trueColor = ({ squares }, list) => squares[list.findIndex(r => r.fill)].fill;
+    expect(trueColor(onlyTrue, rows.filter(r => r.fill))).toBe(trueColor(both, rows));
   });
 
   it('throws when a number column sits on a point or band scale', () => {
@@ -551,8 +633,8 @@ describe('DotGLMark: number and date columns', () => {
     const [{ data: d, options }] = mark.plotSpecs();
     expect(mark.prep.continuous).toBe(true);
     expect(mark.prep.n).toBe(2);
-    expect(options.y[0]).toBeInstanceOf(Date);
-    expect(options.fill.value[0]).toBeInstanceOf(Date);
+    expect(hint(options, 'y')[0]).toBeInstanceOf(Date);
+    expect(hint(options, 'fill')[0]).toBeInstanceOf(Date);
     const fig = Plot.plot({ document, width: 640, height: 400, marks: [Plot.dot(d, options)] });
     expect(fig.scale('y').type).toBe('utc');
     expect(fig.scale('color').type).toBe('utc');

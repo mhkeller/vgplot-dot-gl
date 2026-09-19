@@ -141,6 +141,20 @@ describe('pickDot matches the one-dot-at-a-time rule', () => {
     expect(picks.every(p => p.j % 11 !== 0)).toBe(true);
   });
 
+  it('on a text x axis a filter has thinned, and on one the page fixed in its own order', () => {
+    // No row has 'b', so Plot's axis leaves it out and the other categories move.
+    const codeRows = rows.map((d, i) => ({ ...d, letter: [0, 2, 3][i % 3] }));
+    const setup = m => m.categories.set('letter', { cats: ['a', 'b', 'c', null] });
+    const thinned = painted(codeRows, { x: 'letter', y: 'b', r: 'size' }, {}, setup);
+    expect(thinned.fig.scale('x').domain).toEqual(['a', 'c', null]);
+    expect(compare(thinned.mark, thinned.fig, { ...thinned.mark.lastPaint, painter: 'gl' }).length).toBeGreaterThan(500);
+    // A fixed domain without null: those rows aren't drawn and can't be picked.
+    const fixed = painted(codeRows, { x: 'letter', y: 'b', r: 'size' }, { x: { domain: ['c', 'q', 'a'] } }, setup);
+    const picks = compare(fixed.mark, fixed.fig, fixed.mark.lastPaint);
+    expect(picks.length).toBeGreaterThan(300);
+    expect(picks.every(p => codeRows[p.j].letter !== 3)).toBe(true);
+  });
+
   it('never picks hidden rows or rows in a transparent color', () => {
     const codeRows = rows.map((d, i) => ({ ...d, party: i % 9 === 0 ? 255 : i % 3 }));
     const color = { domain: ['D', 'I', 'R'], range: ['red', 'transparent', 'blue'] };

@@ -12,18 +12,16 @@
  * Both depend only on the scale object, so the tests compare them with the d3
  * scales Plot builds from the same domain and range.
  *
- * A category axis (a point or band scale) is uploaded as category codes. Its
- * straight line comes from the pixels Plot gave the category rows
- * (`categoryLine`), and `axisAffine` picks between the two kinds of line.
+ * A category axis (a point or band scale) is uploaded as category codes.
+ * `categoryAxis` gives each code its place in the scale's domain and the straight
+ * line through those places, `axisTransform` looks the places up, and `axisAffine`
+ * picks between the two kinds of line.
  */
 
 const identity = v => v;
 
 /** Power that keeps the sign, like d3's pow and sqrt scales do for negative numbers. */
 const power = e => v => (v < 0 ? -Math.pow(-v, e) : Math.pow(v, e));
-
-/** Farthest a category may sit from the fitted line, in pixels. */
-const CATEGORY_TOLERANCE_PX = 0.01;
 
 /** The curved part of a scale, or a clear error for scale types the mark can't draw. */
 export function transformFor(scale, name = 'position') {
@@ -36,7 +34,7 @@ export function transformFor(scale, name = 'position') {
       return identity;
     case 'point':
     case 'band':
-      // The uploaded values are category codes; `categoryLine` places them.
+      // The uploaded values are category codes; `categoryAxis` places them.
       return identity;
     case 'log':
       // The base only multiplies log values by a constant, and `affine` divides it out.
@@ -75,26 +73,50 @@ export function affine(scale, center = 0, shift = 0, name = 'position') {
 }
 
 /**
- * The pixel of category code i on a point or band scale, as the line `a * i + b`.
- * `positions` are the pixels Plot worked out for the hint rows (render's `values.x` or `values.y`),
- * and hint row i holds category i. A band scale's dots sit in the middle of the band.
- * Plot spaces the categories of a scale it works out itself evenly, reversed and inset axes included;
- * an explicit domain or another mark on the same scale can break that, and then this throws.
+ * Where a point or band scale puts each category of a column drawn as category codes. `pos[code]` is the
+ * category's place in the scale's domain, and place i is at pixel `a * i + b`, because these scales space
+ * their domain evenly. A band scale's dots sit in the middle of the band. The domain is usually the
+ * categories in the data, but it can list more (an explicit domain, `vg.Fixed`, or another mark on the
+ * same axis) or leave some out; a category that isn't in the domain gets NaN and its dots aren't drawn,
+ * as with Plot's dot. A number scale places no categories. Plot picks one when the only category left is
+ * the empty value, and Plot's dot then draws nothing too.
  */
-export function categoryLine(scale, positions, count, name = 'position') {
-  const b = positions[0];
-  const a = count > 1 ? (positions[count - 1] - positions[0]) / (count - 1) : 0;
-  for (let i = 0; i < count; ++i) {
-    if (!(Math.abs(positions[i] - (a * i + b)) <= CATEGORY_TOLERANCE_PX)) {
-      throw new Error(`dotGL: the ${name} axis doesn't place its categories evenly (an explicit domain or another mark sharing the scale); this isn't supported`);
-    }
-  }
-  return { a, b: scale.type === 'band' ? b + scale.bandwidth / 2 : b };
+export function categoryAxis(scale, cats) {
+  const pos = new Float64Array(cats.length).fill(NaN);
+  if (scale.type !== 'point' && scale.type !== 'band') return { a: 0, b: 0, pos };
+  // d3 keeps the first of repeated values in a domain, so places count distinct values.
+  const place = new Map();
+  for (const v of scale.domain) if (!place.has(v)) place.set(v, place.size);
+  for (let i = 0; i < cats.length; ++i) pos[i] = place.get(cats[i]) ?? NaN;
+  const values = Array.from(place.keys());
+  const n = values.length;
+  if (n === 0) return { a: 0, b: 0, pos };
+  const first = scale.apply(values[0]);
+  const a = n > 1 ? (scale.apply(values[n - 1]) - first) / (n - 1) : 0;
+  return { a, b: first + (scale.bandwidth ?? 0) / 2, pos };
 }
 
 /**
- * The per-frame line for an x or y axis, in the same form as `affine`: from the category line when
- * the axis holds category codes, otherwise from the scale.
+ * The function the painters and the pick index run on an axis value before its line: the place lookup
+ * for a category axis, the scale's curve otherwise. Codes past the end of the list (the hidden code) give NaN.
+ */
+export function axisTransform(scale, line, name = 'position') {
+  if (!line) return transformFor(scale, name);
+  const { pos } = line;
+  return code => (code < pos.length ? pos[code] : NaN);
+}
+
+/** True when two category place tables are the same, or both absent. */
+export function samePlaces(a, b) {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; ++i) if (!Object.is(a[i], b[i])) return false;
+  return true;
+}
+
+/**
+ * The per-frame line for an x or y axis, in the same form as `affine`: from the category axis when
+ * the axis is drawn from category codes, otherwise from the scale.
  */
 export function axisAffine(scale, line, center = 0, shift = 0, name = 'position') {
   return line ? { a: line.a, b: line.b + line.a * center + shift } : affine(scale, center, shift, name);

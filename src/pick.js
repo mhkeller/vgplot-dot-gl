@@ -1,4 +1,4 @@
-import { transformFor, affine, axisAffine } from './scale-map.js';
+import { transformFor, affine, axisAffine, axisTransform } from './scale-map.js';
 
 /**
  * Finds the dot under a point from what the mark painted, without the database.
@@ -32,8 +32,8 @@ export function buildPickIndex(mark, paint) {
   const X = column('x');
   const Y = column('y');
   const R = sr ? column('r') : null;
-  const tx = transformFor(sx, 'x');
-  const ty = transformFor(sy, 'y');
+  const tx = axisTransform(sx, lines.x, 'x');
+  const ty = axisTransform(sy, lines.y, 'y');
   const tr = sr ? transformFor(sr, 'r') : null;
   const ax = axisAffine(sx, lines.x, 0, -frame.fx, 'x');
   const ay = axisAffine(sy, lines.y, 0, -frame.fy, 'y');

@@ -1,5 +1,5 @@
 import { getSharedGL } from '../shared-gl.js';
-import { transformFor, affine, axisAffine } from '../scale-map.js';
+import { transformFor, affine, axisAffine, axisTransform, samePlaces } from '../scale-map.js';
 
 const SCRATCH = new Uint8Array(4);
 
@@ -8,8 +8,8 @@ const MIN_REDUCED_DPR = 1;
 
 /**
  * The WebGL painter. The point data is sent to the graphics card once per query
- * result, and again if a scale changes type, the center moves after a deep zoom,
- * or the context is lost. After that each frame is a few numbers, one draw call,
+ * result, and again if a scale changes type, a category axis moves its categories,
+ * the center moves after a deep zoom, or the context is lost. After that each frame is a few numbers, one draw call,
  * and a copy into the mark's canvas.
  */
 
@@ -48,15 +48,15 @@ const FLOAT32_EPS = 6e-8;
  * Which center to subtract before sending data up. Normally the middle of the
  * data range. When you have zoomed in so far that 32-bit rounding of the centered
  * values would move dots by a visible fraction of a pixel, the middle of what is
- * on screen is used instead. That costs one more upload. A category axis always
- * uses the middle of its codes, which are small integers that 32-bit floats hold exactly.
+ * on screen is used instead. That costs one more upload. A category axis uses 0:
+ * its places are small integers, which 32-bit floats store exactly.
  */
 function centersFor(mark, sx, sy) {
   const { prep, gpu } = mark;
   const tx = transformFor(sx, 'x');
   const ty = transformFor(sy, 'y');
-  let cx = gpu && !prep.xCats ? gpu.cx : center(tx, prep.extent.x);
-  let cy = gpu && !prep.yCats ? gpu.cy : center(ty, prep.extent.y);
+  let cx = prep.xCats ? 0 : gpu ? gpu.cx : center(tx, prep.extent.x);
+  let cy = prep.yCats ? 0 : gpu ? gpu.cy : center(ty, prep.extent.y);
   if (gpu) {
     const drift = (T, s, c) => {
       const mid = (T(+s.domain[0]) + T(+s.domain[1])) / 2;
@@ -72,11 +72,15 @@ function centersFor(mark, sx, sy) {
   return { cx, cy };
 }
 
-function upload(mark, shared, sx, sy, sr) {
+function upload(mark, shared, sx, sy, sr, lines) {
   const { cx, cy } = centersFor(mark, sx, sy);
   const key = `${scaleKey(sx, sy, sr)}|${cx}|${cy}`;
   const { gpu, prep, data } = mark;
-  if (gpu && gpu.shared === shared && gpu.data === data && gpu.prep === prep && gpu.key === key && gpu.generation === shared.generation) return gpu;
+  const places = { x: lines.x?.pos ?? null, y: lines.y?.pos ?? null };
+  if (
+    gpu && gpu.shared === shared && gpu.data === data && gpu.prep === prep && gpu.key === key && gpu.generation === shared.generation &&
+    samePlaces(gpu.places.x, places.x) && samePlaces(gpu.places.y, places.y)
+  ) return gpu;
   freeGPU(mark);
 
   const t0 = performance.now();
@@ -89,8 +93,8 @@ function upload(mark, shared, sx, sy, sr) {
   const X = column('x');
   const Y = column('y');
   const R = sr ? column('r') : null;
-  const tx = transformFor(sx, 'x');
-  const ty = transformFor(sy, 'y');
+  const tx = axisTransform(sx, lines.x, 'x');
+  const ty = axisTransform(sy, lines.y, 'y');
   const tr = R ? transformFor(sr, 'r') : null;
 
   const { n, perm, codes, hidden } = prep;
@@ -126,7 +130,7 @@ function upload(mark, shared, sx, sy, sr) {
   }
   gl.bindVertexArray(null);
 
-  mark.gpu = { shared, vao, buffers, n, cx, cy, hasR: !!fr, meanT: n ? sumR / n : 0, key, data, prep, generation: shared.generation, uploadMs: performance.now() - t0 };
+  mark.gpu = { shared, vao, buffers, n, cx, cy, hasR: !!fr, meanT: n ? sumR / n : 0, key, places, data, prep, generation: shared.generation, uploadMs: performance.now() - t0 };
   shared.refs.add(mark);
   return mark.gpu;
 }
@@ -161,7 +165,7 @@ export function paintGL(mark, canvas, { sx, sy, sr, lines, frame, style }, { all
     return { painter: 'gl', skipped: 'context lost' };
   }
   const t0 = performance.now();
-  const gpu = upload(mark, shared, sx, sy, sr);
+  const gpu = upload(mark, shared, sx, sy, sr, lines);
   const t1 = performance.now();
   const { gl, uniforms: u } = shared;
   const { fw, fh, offset, fx, fy } = frame;

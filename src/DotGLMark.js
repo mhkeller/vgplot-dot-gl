@@ -3,7 +3,7 @@ import { toDataColumns } from '@uwdata/mosaic-core';
 import { Query, cast, coalesce, epoch_ms, float64, isColumnRef, literal, verbatim } from '@uwdata/mosaic-sql';
 import { prepare } from './prepare.js';
 import { paletteFromValues, paletteFromScale, parseColor } from './color.js';
-import { categoryLine } from './scale-map.js';
+import { categoryAxis } from './scale-map.js';
 import { getSharedGL } from './shared-gl.js';
 import { paintGL, freeGPU } from './painters/gl.js';
 import { paintRect2D } from './painters/rect2d.js';
@@ -25,6 +25,12 @@ const IGNORED_OPTIONS = ['stroke', 'strokeWidth', 'strokeOpacity', 'symbol', 'ro
 
 /** The only options that can be a column. */
 const COLUMN_CHANNELS = ['x', 'y', 'r', 'fill'];
+
+/**
+ * The extra channels that give Plot the hints, and their scales. Their names differ from the dot's own x, y, r
+ * and fill, which would replace extra channels of the same name.
+ */
+const HINTS = { x: ['dotglX', 'x'], y: ['dotglY', 'y'], r: ['dotglR', 'r'], fill: ['dotglFill', 'color'] };
 
 /** Most categories an x or y column may have. It is Plot's own limit for an axis whose categories it works out itself. */
 const MAX_AXIS_CATEGORIES = 10000;
@@ -68,8 +74,8 @@ function categorySQL(col, cats) {
  *
  * It is a mosaic-plot Mark, so it gets the database query, the data decoding and
  * the option handling for free. Observable Plot still makes the axes, scales and
- * legend. Instead of the rows, the mark hands Plot a few numbers (the lowest and
- * highest values, the list of categories), and Plot works out the same scales
+ * legend. Instead of the rows, the mark gives Plot a few numbers (the lowest and
+ * highest values, the categories in the result), and Plot works out the same scales
  * from those. The mark then draws the real rows into a canvas placed inside the
  * plot's SVG.
  *
@@ -99,7 +105,9 @@ function categorySQL(col, cats) {
  * columns come back as doubles (dates as epoch milliseconds). Text and boolean
  * columns are categories: the distinct values are fetched once per table, and the
  * query returns each row's position in the sorted list, which the graphics card
- * draws. Plot gets the list itself, so axes and legends show the text. A number or
+ * draws. Plot gets the categories that are in each result, so axes and legends show
+ * the text, and a filter that removes every row of a category removes it from the
+ * axis or legend too, as with vg.dot. A number or
  * date fill gets a color ramp: the values are split into 254 steps colored from
  * the plot's color scale, and Plot draws a ramp legend. Array data takes number
  * and date x and y, and up to 254 fill values.
@@ -214,15 +222,18 @@ export class DotGLMark extends Mark {
     let largest = null;
     entries.forEach(({ c, name, limit }, i) => {
       const col = c.field.column;
-      const cats = Array.from(toDataColumns(results[i]).columns.v).sort(ascendingDefined);
-      if (cats.length > limit) {
+      const text = Array.from(toDataColumns(results[i]).columns.v).sort(ascendingDefined);
+      if (text.length > limit) {
         throw new Error(`dotGL: the ${name} column "${col}" has more than ${limit} distinct values`);
       }
-      const text = categorySQL(String(c.field), cats);
-      const size = encoder.encode(JSON.stringify(text)).length;
+      // A boolean column's list is true and false themselves, as vg.dot gives Plot, so Plot colors them the
+      // way it colors booleans. 'false' sorts before 'true' as false does before true.
+      const cats = c.type === 'boolean' ? text.map(v => (v == null ? v : v === 'true')) : text;
+      const sql = categorySQL(String(c.field), text);
+      const size = encoder.encode(JSON.stringify(sql)).length;
       bytes += size;
       if (!largest || size > largest.size) largest = { col, size };
-      categories.set(c.as, { cats, fragment: verbatim(text) });
+      categories.set(c.as, { cats, fragment: verbatim(sql) });
     });
     if (bytes > MAX_CATEGORY_BYTES) {
       throw new Error(`dotGL: the categories of "${largest.col}" are too large to send (${(bytes / 1048576).toFixed(1)} MB)`);
@@ -330,24 +341,19 @@ export class DotGLMark extends Mark {
   plotSpecs() {
     if (!this.data || this.destroyed) return [];
     const prep = (this.prep ??= this.prepareData());
-    const options = { sort: null, render: this.render };
+    // Plot calls a mark's render only when some of its rows pass Plot's row filter (inside the domain, r above 0).
+    // A hint row pairs entries from separate lists, so with a domain that leaves values out every hint row could
+    // fail while real rows pass. The hints go in as extra channels with that filter turned off. frameAnchor
+    // keeps Plot's dot from reading x and y out of the data.
+    const options = { sort: null, render: this.render, frameAnchor: 'middle', channels: {} };
     for (const c of this.channels) {
       if (Object.hasOwn(c, 'value')) {
         options[c.channel] = c.value;
         continue;
       }
-      switch (c.channel) {
-        case 'x':
-        case 'y':
-        case 'r':
-          options[c.channel] = prep.hints[c.channel];
-          break;
-        case 'fill':
-          options.fill = { value: prep.hints.fill, scale: 'color' };
-          break;
-        default:
-          throw new Error(`dotGL: the "${c.channel}" option cannot be bound to a column`);
-      }
+      if (!HINTS[c.channel]) throw new Error(`dotGL: the "${c.channel}" option cannot be bound to a column`);
+      const [name, scale] = HINTS[c.channel];
+      options.channels[name] = { value: prep.hints[c.channel], scale, filter: null };
     }
     return [{ type: 'dot', data: { length: prep.k }, options }];
   }
@@ -369,10 +375,10 @@ export class DotGLMark extends Mark {
     // Only our own radius column uses the r scale. Another mark in the plot may have made one.
     const sr = this.channelField('r', { exact: true }) ? scales.scales.r : undefined;
     if (!sx || !sy) throw new Error('dotGL: the plot must have x and y scales (projections are not supported)');
-    // A category axis places code i on the line through the pixels Plot gave hint row i. Number and date
+    // A category axis places each code where its category is in the scale's domain. Number and date
     // values go through the scale's formula, and a point or band scale has none, so their dots would miss the ticks.
     const line = (name, scale, cats) => {
-      if (cats) return categoryLine(scale, values[name], cats.length, name);
+      if (cats) return categoryAxis(scale, cats);
       if (scale.type === 'point' || scale.type === 'band') {
         throw new Error(`dotGL: the ${name} scale type "${scale.type}" is not supported for a number or date column`);
       }
@@ -395,14 +401,15 @@ export class DotGLMark extends Mark {
     // Plot's dot would draw hollow rings in the text color. This mark always fills.
     const fill = this.constant('fill') ?? 'currentColor';
     const missingColors = [];
+    const fillColors = values[HINTS.fill[0]];
     const style = {
       opacity: +(this.constant('opacity') ?? 1) * +(this.constant('fillOpacity') ?? 1),
       fill,
       fillRGBA: parseColor(fill, this.plot?.element),
       r: +(this.constant('r') ?? 3),
-      palette: !values.fill ? null
+      palette: !fillColors ? null
         : prep.continuous ? paletteFromScale(scales.scales.color, prep.extent.fill, prep.levels)
-        : paletteFromValues(values.fill, prep.cats.length, missingColors)
+        : paletteFromValues(fillColors, prep.cats.length, missingColors, prep.fillRows)
     };
     this.warnMissingColors(missingColors, prep.cats);
 

@@ -1,4 +1,4 @@
-import { transformFor, affine, axisAffine } from '../scale-map.js';
+import { transformFor, affine, axisAffine, axisTransform } from '../scale-map.js';
 
 /**
  * A plain 2D canvas painter: one filled square per dot, in the same draw order
@@ -25,8 +25,8 @@ export function paintRect2D(mark, canvas, { sx, sy, sr, lines, frame, style }) {
   const X = column('x');
   const Y = column('y');
   const R = sr ? column('r') : null;
-  const tx = transformFor(sx, 'x');
-  const ty = transformFor(sy, 'y');
+  const tx = axisTransform(sx, lines.x, 'x');
+  const ty = axisTransform(sy, lines.y, 'y');
   const tr = sr ? transformFor(sr, 'r') : null;
   const ax = axisAffine(sx, lines.x, 0, -fx, 'x');
   const ay = axisAffine(sy, lines.y, 0, -fy, 'y');
