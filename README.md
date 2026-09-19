@@ -60,7 +60,7 @@ To check what you have, run `pnpm why @uwdata/mosaic-core` (or `npm ls @uwdata/m
 
 vgplot builds each chart with Observable Plot, which normally makes one SVG circle for every row. That can get slow. This mark keeps Plot for the axes, scales and legend, and takes over the drawing of the points:
 
-1. **Plot doesn't see the rows.** The mark gives Plot a handful of numbers describing the chart's domains: the lowest and highest x, y and r, and the list of categories. Plot works out the same axes, ticks and legend from those as it would from the full columns.
+1. **Plot doesn't see the rows.** The mark gives Plot a handful of numbers describing the chart's domains: the lowest and highest x, y and r, and the categories that appear in the rows. Plot works out the same axes, ticks and legend from those as it would from the full columns.
 2. **The mark draws the rows.** Plot lets a mark bring its own `render` function. This one draws every point on a single WebGL canvas shared by all the plots on the page. It copies the picture into a small canvas inside the plot's SVG and keeps that canvas from one redraw to the next. 
 
 The canvas sits inside the SVG, so code that reads `svg.scale()` or places things with `getScreenCTM()` keeps working, and the picture shrinks with the SVG when the page is narrow.
@@ -84,9 +84,9 @@ Same as `vg.dot`:
 
 | option | what it takes |
 |---|---|
-| `x`, `y` | column names or SQL expressions (required). Number and date columns give a number or time axis. Text and boolean database columns give a category axis with one slot per value, sorted, with empty values in the last slot; up to 10,000 values, the same limit Plot has. An explicit domain or another mark that leaves out categories or spaces them unevenly is an error. Array data takes number and date columns only, and a text column there throws rather than quietly drawing nothing. |
+| `x`, `y` | column names or SQL expressions (required). Number and date columns give a number or time axis. Text and boolean database columns give a category axis with one slot per value in the rows, sorted, with empty values in the last slot. The column may have up to 10,000 values in the whole table, the same limit Plot has. An explicit domain, `vg.Fixed`, and other marks on the same axis work as they do with `vg.dot`, and dots whose value isn't in the domain aren't drawn. Array data takes number and date columns only, and a text column there throws rather than quietly drawing nothing. |
 | `r` | a number, or a column (set `rDomain` / `rRange` on the plot as usual) |
-| `fill` | a color (`#hex`, a name, `var(--x)`, `currentColor`), or a column. Text and boolean columns get one color per value and a swatch legend: up to 65,535 values from a database column, 254 from array data. Number and date columns get a color ramp with 254 steps and a ramp legend. `colorDomain`, `colorRange`, `colorScheme` and `colorLegend` all apply. A value the color domain leaves out has no color, so those dots are drawn invisible; the mark warns once when that happens. |
+| `fill` | a color (`#hex`, a name, `var(--x)`, `currentColor`), or a column. Text and boolean columns get one color per value in the rows and a swatch legend: up to 65,535 values in the whole table for a database column, 254 for array data. Booleans get Plot's colors for true and false, as with `vg.dot`. Number and date columns get a color ramp with 254 steps and a ramp legend. `colorDomain`, `colorRange`, `colorScheme` and `colorLegend` all apply. A value the color domain leaves out has no color, so those dots are drawn invisible; the mark warns once when that happens. |
 | `opacity`, `fillOpacity` | numbers, multiplied together. Overlapping dots add up the way see-through SVG circles do. |
 | `clip` | `true` keeps the dots inside the plot frame |
 
@@ -194,7 +194,9 @@ To sort the dots by group, pass the group column to `orderby`, as in `orderby: '
 
 ## Things to know
 
-**Category axes and legends hold still when you filter.** This is the one place the mark behaves differently from `vg.dot`. The list of values in a text or boolean column is read once from the whole table, not from the rows on screen, so brushing another chart thins the dots without relabelling the axis or reshuffling the legend. `vg.dot` works the list out from whatever rows survive the filter, so its axis and legend change as you brush.
+**Category axes and legends follow filters, as with `vg.dot`.** When a brush in another chart filters this mark, a text axis shows only the values that still have rows, and the slots close up. The legend does the same. With no color domain set, Plot gives categories their colors in list order, so when a value drops out, the values after it change color. To keep an axis or the colors the same while you brush, fix the domain from the first draw with `vg.xDomain(vg.Fixed)`, `vg.yDomain(vg.Fixed)` or `vg.colorDomain(vg.Fixed)`; values with no rows then keep an empty slot.
+
+The mark reads the list of values once per table, from the whole table, so the value limits count every value in the table, including ones a filter leaves out.
 
 **A very long list of category values throws.** The list is written into the query text, and the mark throws when that text passes about 3.5 MB, a size many servers reject. The error names the largest column, which is usually, though not always, the one to change.
 
@@ -216,7 +218,7 @@ plotEl.value.marks.forEach(m => m.destroy?.());
 ## Demo and tests
 
 ```bash
-pnpm dev               # Vite demo: DuckDB-WASM, 500k made-up rows, seven plots, timings, zoom test, side by side with vg.dot
+pnpm dev               # Vite demo: DuckDB-WASM, 500k made-up rows, ten plots (one brush filters two), timings, zoom test, side by side with vg.dot
 pnpm test              # unit tests (tests/unit): scale math against d3, prepare(), colors, picking, tooltip lookups, and a jsdom check of the scale hints
 pnpm test:e2e          # browser tests: Chromium and WebKit, plus Chromium at pixel ratio 1. Firefox joins on CI
 pnpm test:e2e:update   # rewrite the screenshot baselines after a visual change you meant to make

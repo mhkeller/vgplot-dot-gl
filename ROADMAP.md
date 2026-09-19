@@ -20,17 +20,11 @@ Fix: measure frames per second at 2M+ rows with `MIN_REDUCED_DPR` at 1 and at 0.
 
 Fix: first read `mark.stats.blitMs` with `benchmark` off on a page with many plots. If it reads tens of milliseconds, draw every plot that needs redrawing before copying any of them.
 
-## Text axes break with an explicit domain or a shared scale
+## Category limits count the whole table
 
-A text axis places category i on a straight line through the pixels Plot gave the category rows (`categoryLine` in `src/scale-map.js`). An explicit domain that drops or reorders categories, or a second mark that adds values to the same scale, breaks that line and the mark throws.
+The mark reads each text column's list of values once, from the whole table, and throws past 10,000 values on an axis or 65,535 on `fill`. A filter can leave far fewer values on screen, but the limit still counts all of them. With `vg.dot`, Plot's 10,000 limit on an axis counts only the values in the filtered rows, and `fill` has no limit. So an axis on a 50,000-value column filtered down to 100 values works with `vg.dot` and throws here.
 
-Fix: upload a table of positions, one per category, as a small texture the way the palette is uploaded, and look positions up in the shader. Categories missing from the domain get a hidden position.
-
-## Text axes don't shrink under a cross-filter
-
-Categories are fetched once per table, from the whole table. When a cross-filter narrows the rows, a text axis still keeps a slot for every value. `vg.dot`'s axis shrinks to the values left.
-
-Fix: keep the codes from the whole table so colors stay the same, but pass Plot only the categories in the current result.
+Fix: when the whole-table list is over the limit, read the list again with the mark's filter before each query, for that column only. That costs one extra query each time the filter changes.
 
 ## Picking is slow with thousands of huge dots
 
