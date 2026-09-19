@@ -116,7 +116,7 @@ describe('DotGLTip', () => {
     await vi.advanceTimersByTimeAsync(140);
     expect(tip.index).not.toBeNull();
     expect(element.querySelector('.dotgl-tip')).not.toBeNull();
-    expect(svg.querySelector('circle.dotgl-ring').getAttribute('r')).toBe('5');
+    expect(svg.querySelector('circle.dotgl-ring').getAttribute('r')).toBe('3');
     expect(document.head.querySelectorAll('style[data-dotgl-tip]')).toHaveLength(1);
   });
 
