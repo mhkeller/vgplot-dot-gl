@@ -5,6 +5,8 @@
 
 A faster `dot` mark for [vgplot](https://idl.uw.edu/mosaic/) that uses WebGL instead of SVG. Same options as `vg.dot`, same axes, legend, zoom and brush. 
 
+[Demo](https://mhkeller.github.io/vgplot-dot-gl/): ten plots of the same 500,000 rows.
+
 Change `vg.dot(` to `dotGL(` and you're done. If you use a `vg` API object, you can add it there: `createAPIContext({ extensions: { dotGL } })`.
 
 ```js
