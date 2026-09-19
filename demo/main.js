@@ -37,8 +37,10 @@ async function loadData(n) {
   ui.status.textContent = `creating ${n.toLocaleString()} rows…`;
   const t = performance.now();
   if (seed != null) await exec(`SELECT setseed(${seed})`);
+  // volume_range is text made from volume ('00–10' up to '90–100'), so brushing volume changes which ranges are left.
   await exec(`CREATE OR REPLACE TABLE pts AS
-    SELECT
+    SELECT *, printf('%02d–%d', floor(volume / 10)::INT * 10, floor(volume / 10)::INT * 10 + 10) AS volume_range
+    FROM (SELECT
       exp(random() * 9) + 1 AS size,
       (exp(random() * 9) + 1) * (0.4 + random() * 1.2) AS price,
       power(random(), 2) * 100 AS volume,
@@ -48,7 +50,7 @@ async function loadData(n) {
       TIMESTAMP '2020-01-01' + to_seconds((random() * 1800 * 86400)::BIGINT) AS ts,
       TIME '00:00:00' + to_seconds((random() * 86400)::BIGINT) AS tod,
       row_number() OVER () AS id
-    FROM range(${n})`);
+    FROM range(${n}))`);
   // The marks' SQL text hasn't changed, so mosaic's query cache would hand back the old rows.
   coord.clear({ clients: false, cache: true });
   ui.status.textContent = `${n.toLocaleString()} rows ready in ${Math.round(performance.now() - t)} ms`;
@@ -60,8 +62,11 @@ const PANELS = [
   { title: 'size vs price · linear · party · r volume', x: 'size', y: 'price', fill: 'party', size: 'volume' },
   { title: 'price vs volume · constant color', x: 'price', y: 'volume', log: false },
   { title: 'size vs price · log-log · party · r volume', x: 'size', y: 'price', fill: 'party', size: 'volume', log: true },
-  { title: 'volume vs shift · brush filters the next panel', x: 'volume', y: 'shift', fill: 'party', brush: true },
-  { title: 'size vs price · filtered by the brush', x: 'size', y: 'price', fill: 'party', log: true, filtered: true },
+  // The next two panels show the rows the brush selects: their axes fit those rows, as vg.dot's do.
+  // A text axis keeps only the categories that have rows left.
+  { title: 'volume vs shift · brush to filter the next two panels', x: 'volume', y: 'shift', fill: 'party', brush: true },
+  { title: 'volume vs shift · filtered by the brush', x: 'volume', y: 'shift', fill: 'party', filtered: true },
+  { title: 'shift vs volume_range · text axis filtered by the brush', x: 'shift', y: 'volume_range', fill: 'party', filtered: true, pany: false },
   { title: 'price vs volume · continuous color by shift', x: 'price', y: 'volume', fill: 'shift', scheme: 'viridis' },
   // The three date types. `tod` on r checks a date-typed radius, which the tooltip used to print as a raw number.
   { title: 'day vs price · DATE on x · TIME on r', x: 'day', y: 'price', fill: 'party', size: 'tod', sizeIsDate: true },
@@ -121,7 +126,8 @@ async function buildPanel(spec, { benchmark }) {
   // A brush catches every drag, and d3-brush swallows the mouse-up that d3-zoom
   // waits for, which leaves the pan stuck on. One or the other per plot.
   if (spec.brush) marks.push(vg.intervalXY({ as: brush, brush: { fill: 'none', stroke: '#333' } }));
-  else marks.push(vg.panZoom({ x: xZoom, y: yZoom, xfield: spec.x, yfield: spec.y }));
+  // A text axis has no in-between values to pan or zoom to, so `pany: false` leaves it alone.
+  else marks.push(vg.panZoom({ x: xZoom, y: yZoom, xfield: spec.x, yfield: spec.y, pany: spec.pany ?? true }));
   if (spec.log) marks.push(vg.xScale('log'), vg.yScale('log'));
   return vg.plot(...marks);
 }

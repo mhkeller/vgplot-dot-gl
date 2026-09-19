@@ -32,7 +32,8 @@ export function panelStats(page) {
 /**
  * Take a sample of a panel's own rows, put them through the plot's scales, and
  * check that there is a painted pixel at each spot. This needs no SVG circles,
- * so it also works after a zoom.
+ * so it also works after a zoom. A text axis arrives as category codes, which
+ * are looked up in the mark's category list first.
  */
 export function selfParity(page, panelIndex, samples = 600) {
   return page.evaluate(([index, samples]) => {
@@ -52,15 +53,15 @@ export function selfParity(page, panelIndex, samples = 600) {
     const cols = mark.data.columns;
     const X = cols[mark.channelField('x', { exact: true }).as];
     const Y = cols[mark.channelField('y', { exact: true }).as];
-    const { codes, hidden } = mark.prep;
+    const { codes, hidden, xCats, yCats } = mark.prep;
     const step = Math.max(1, Math.floor(X.length / samples));
     let tested = 0;
     let hit = 0;
     const misses = [];
     for (let i = 0; i < X.length && tested < samples; i += step) {
       if (codes[i] === hidden) continue;
-      const cx = xs.apply(X[i]);
-      const cy = ys.apply(Y[i]);
+      const cx = xs.apply(xCats ? xCats[X[i]] : X[i]);
+      const cy = ys.apply(yCats ? yCats[Y[i]] : Y[i]);
       if (!Number.isFinite(cx) || !Number.isFinite(cy)) continue;
       const px = Math.round((cx - fx) * scale);
       const py = Math.round((cy - fy) * scale);

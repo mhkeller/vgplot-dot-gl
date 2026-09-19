@@ -2,20 +2,20 @@ import { test, expect } from '@playwright/test';
 import { openDemo, panelStats, selfParity, paintedPixels, plotGeometry, settle, rowUnder } from './helpers.js';
 
 test.describe('dotGL core behavior', () => {
-  test('renders nine GPU plots with legends and no errors', async ({ page }) => {
+  test('renders ten GPU plots with legends and no errors', async ({ page }) => {
     const errors = await openDemo(page);
     const panels = await panelStats(page);
-    expect(panels).toHaveLength(9);
+    expect(panels).toHaveLength(10);
     for (const p of panels) {
       expect(p.stats.painter, p.title).toBe('gl');
       expect(p.stats.drawn, p.title).toBe(50000);
       expect(p.hasCanvas, p.title).toBe(true);
     }
-    expect(panels.filter(p => p.legend === 1)).toHaveLength(8);
-    await expect(page.locator('#status')).toContainText('9 plots ready');
+    expect(panels.filter(p => p.legend === 1)).toHaveLength(9);
+    await expect(page.locator('#status')).toContainText('10 plots ready');
     // The number-colored panel gets a ramp legend, the category ones get swatches.
     const legends = await page.evaluate(() => demo.panels().map(p => ({ swatches: p.plotEl.querySelectorAll('.legend .swatch, .legend div > div').length > 0, ramp: !!p.plotEl.querySelector('.legend svg image, .legend svg rect') })));
-    expect(legends[6].ramp).toBe(true);
+    expect(legends[7].ramp).toBe(true);
     expect(errors).toEqual([]);
   });
 
@@ -56,7 +56,7 @@ test.describe('dotGL core behavior', () => {
 
   test('each panel paints its own rows at the scale positions', async ({ page }) => {
     const errors = await openDemo(page);
-    for (let i = 0; i < 9; ++i) {
+    for (let i = 0; i < 10; ++i) {
       const r = await selfParity(page, i);
       expect(r.tested, `panel ${i}`).toBeGreaterThan(150);
       expect(r.hit, `panel ${i}: ${JSON.stringify(r.misses)}`).toBe(r.tested);
@@ -127,21 +127,61 @@ test.describe('dotGL core behavior', () => {
     expect(errors).toEqual([]);
   });
 
-  test('brushing one panel filters the linked panel', async ({ page }) => {
+  test('brushing one panel filters the linked panels, whose axes fit the rows left', async ({ page }) => {
     const errors = await openDemo(page);
+    const domains = () => page.evaluate(() => demo.panels().slice(4, 7).map(p => {
+      const svg = p.plotEl.querySelector('svg');
+      return { x: svg.scale('x').domain, y: svg.scale('y').domain };
+    }));
+    const before = await domains();
+    expect(before[2].y).toHaveLength(10);
+    // Brush the right part of the volume axis, from about 60 to 100, and every shift.
     const overlay = page.locator('.panel').nth(4).locator('rect.overlay');
     const box = await overlay.boundingBox();
-    await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.2);
+    await page.mouse.move(box.x + box.width * 0.6, box.y + 2);
     await page.mouse.down();
-    await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.6, { steps: 8 });
+    await page.mouse.move(box.x + box.width - 2, box.y + box.height - 2, { steps: 8 });
     await page.mouse.up();
-    await expect.poll(async () => (await panelStats(page))[5].stats.drawn, { timeout: 20_000 }).toBeLessThan(50000);
-    // The brush fires again on release; let the linked panel finish its last query and redraw.
-    await settle(page, 5);
-    const filtered = (await panelStats(page))[5].stats.drawn;
-    expect(filtered).toBeGreaterThan(0);
-    const parity = await selfParity(page, 5);
-    expect(parity.hit).toBe(parity.tested);
+    for (const index of [5, 6]) {
+      await expect.poll(async () => (await panelStats(page))[index].stats.drawn, { timeout: 20_000 }).toBeLessThan(50000);
+      // The brush fires again on release; let the linked panel finish its last query and redraw.
+      await settle(page, index);
+      expect((await panelStats(page))[index].stats.drawn).toBeGreaterThan(0);
+      const parity = await selfParity(page, index);
+      expect(parity.tested, `panel ${index}`).toBeGreaterThan(50);
+      expect(parity.hit, `panel ${index}: ${JSON.stringify(parity.misses)}`).toBe(parity.tested);
+    }
+    const [, same, text] = await domains();
+    // The panel with the brushed columns shows only the brushed volumes.
+    expect(same.x[0]).toBeGreaterThan(50);
+    // The text axis keeps only the volume ranges that have rows left.
+    expect(text.y.length).toBeLessThan(10);
+    expect(text.y.at(-1)).toBe('90–100');
+    expect(text.y.every(v => +v.slice(0, 2) >= 50)).toBe(true);
+    expect(errors).toEqual([]);
+  });
+
+  test('moves the dots when only a text axis domain changes', async ({ page }) => {
+    const errors = await openDemo(page);
+    // Same rows, reversed y domain: the categories trade places, so the uploaded places have to change too.
+    const order = await page.evaluate(() => {
+      const p = demo.panels()[6];
+      window.gpuBefore = p.plotEl.value.marks[0].gpu;
+      const reversed = [...p.plotEl.querySelector('svg').scale('y').domain].reverse();
+      p.plotEl.value.setAttribute('yDomain', reversed);
+      p.plotEl.value.update();
+      return reversed;
+    });
+    await expect.poll(() => page.evaluate(() => demo.panels()[6].plotEl.querySelector('svg').scale('y').domain)).toEqual(order);
+    await settle(page, 6);
+    const uploaded = await page.evaluate(() => {
+      const gpu = demo.panels()[6].plotEl.value.marks[0].gpu;
+      return { fresh: gpu !== window.gpuBefore, samePrep: gpu.prep === window.gpuBefore.prep };
+    });
+    expect(uploaded).toEqual({ fresh: true, samePrep: true });
+    const parity = await selfParity(page, 6);
+    expect(parity.tested).toBeGreaterThan(150);
+    expect(parity.hit, JSON.stringify(parity.misses)).toBe(parity.tested);
     expect(errors).toEqual([]);
   });
 
@@ -221,7 +261,7 @@ test.describe('dotGL core behavior', () => {
       const s = demo.getSharedGL();
       return { refs: s.refs.size, glError: s.gl.getError() };
     });
-    expect(disposed.refs).toBe(9);
+    expect(disposed.refs).toBe(10);
     expect(disposed.glError).toBe(0);
     expect(await paintedPixels(page, 0)).toBe(before);
     expect(errors).toEqual([]);

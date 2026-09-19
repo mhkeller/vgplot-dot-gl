@@ -4,7 +4,7 @@ import { openDemo } from './helpers.js';
 const mask = page => [page.locator('.stats'), page.locator('#status')];
 
 test.describe('screenshots', () => {
-  test('nine panels at 50k rows', async ({ page }) => {
+  test('ten panels at 50k rows', async ({ page }) => {
     const errors = await openDemo(page);
     await page.waitForTimeout(500);
     await expect(page).toHaveScreenshot('demo-50k.png', { mask: mask(page), fullPage: true });
