@@ -1,6 +1,6 @@
 {
   "name": "@mhkeller/vgplot-dot-gl",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "A GPU-drawn drop-in for vgplot's dot mark: same API, hundreds of thousands of points, axes/legends/interactors unchanged.",
   "type": "module",
   "main": "./src/index.js",
