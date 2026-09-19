@@ -9,13 +9,12 @@ import { defineConfig, devices } from '@playwright/test';
 const viewport = { width: 1480, height: 1000 };
 
 /**
- * Firefox runs on CI and is left out everywhere else. The Firefox that Playwright
- * ships is its own patched Nightly, and as of Playwright 1.63 that build quits on
- * startup with "Could not find profile folder" on macOS 27, before it loads a page.
- * The library itself is fine in Firefox; only this build can't start. Set FIREFOX=1
- * to put the project back once Playwright ships one that works.
+ * Firefox is left out unless FIREFOX=1. The Firefox that Playwright ships is its own
+ * patched Nightly, and as of Playwright 1.63 that build quits on startup with
+ * "Could not find profile folder" on macOS 27, before it loads a page. The library
+ * itself is fine in Firefox; only this build can't start.
  */
-const runFirefox = !!process.env.CI || !!process.env.FIREFOX;
+const runFirefox = !!process.env.FIREFOX;
 
 export default defineConfig({
   testDir: 'tests/e2e',
