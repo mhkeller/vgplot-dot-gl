@@ -129,6 +129,7 @@ export class DotGLMark extends Mark {
       throw new Error("dotGL: sort must be '-r' or null (use orderby to set the draw order)");
     }
     if (own.tip?.fields && own.key == null) throw new Error('dotGL: tip.fields needs a key column');
+    if (own.onClick != null && typeof own.onClick !== 'function') throw new Error('dotGL: onClick must be a function');
     if (own.onClick && own.key == null) throw new Error('dotGL: onClick needs a key column');
     const groupby = own.groupby == null ? [] : [own.groupby].flat();
     super('dot', source, rest);
