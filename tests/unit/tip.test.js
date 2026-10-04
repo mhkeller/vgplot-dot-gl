@@ -76,11 +76,14 @@ function hovered(columns, options, { types = {}, sqlTypes = {}, categories = {},
   const moveTo = (j, { on = mark, buttons = 0 } = {}) => {
     element.querySelector('svg').dispatchEvent(new PointerEvent('pointermove', { ...at(j, { on }), buttons }));
   };
-  /** pointerdown + click at row j, or at absolute client coords. A `drag` shifts the click. */
-  const clickAt = (jOrPos, { on = mark, drag = [0, 0] } = {}) => {
+  /** pointerdown + click at row j, or at absolute client coords. A `drag` shifts the click; `via` lists the offsets of pressed moves between them. */
+  const clickAt = (jOrPos, { on = mark, drag = [0, 0], via = [] } = {}) => {
     const pos = typeof jOrPos === 'number' ? at(jOrPos, { on }) : jOrPos;
     const svg = element.querySelector('svg');
     svg.dispatchEvent(new PointerEvent('pointerdown', { clientX: pos.clientX, clientY: pos.clientY, button: 0 }));
+    for (const [dx, dy] of via) {
+      svg.dispatchEvent(new PointerEvent('pointermove', { clientX: pos.clientX + dx, clientY: pos.clientY + dy, buttons: 1 }));
+    }
     svg.dispatchEvent(new PointerEvent('click', {
       clientX: pos.clientX + drag[0],
       clientY: pos.clientY + drag[1],
@@ -528,5 +531,25 @@ describe('DotGLTip', () => {
     expect(onClick).not.toHaveBeenCalled();
     clickAt(3, { drag: [3, 0] });
     expect(onClick).toHaveBeenCalledWith({ key: 103 });
+  });
+
+  it('ignores a click after a pan that went far and came back', async () => {
+    const onClick = vi.fn();
+    const { clickAt } = hovered(line(), { x: 'a', y: 'b', r: 3, onClick });
+    await vi.advanceTimersByTimeAsync(200);
+    clickAt(3, { via: [[20, 0], [0, 0]] });
+    expect(onClick).not.toHaveBeenCalled();
+    clickAt(3, { via: [[2, 0]] });
+    expect(onClick).toHaveBeenCalledWith({ key: 103 });
+  });
+
+  it('a mark with only onClick, drawn on top, leaves the hover to the mark with a tip', async () => {
+    const second = { x: 'a', y: 'b', r: 3, onClick: () => {} };
+    const { tips, element, moveTo } = hovered(line(), { x: 'a', y: 'b', r: 3, tip: true }, { second });
+    await vi.advanceTimersByTimeAsync(200);
+    moveTo(2);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(tips.map(t => t.shown?.j ?? null)).toEqual([2, null]);
+    expect(element.querySelector('.dotgl-tip')).not.toBeNull();
   });
 });

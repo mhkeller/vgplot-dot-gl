@@ -19,6 +19,9 @@ const REST_MS = 100;
 /** A click that moved farther than this from its pointerdown is a drag, not a pick. */
 const DRAG_PX = 4;
 
+/** Whether a pointer event is farther than DRAG_PX from the pointerdown `down`. */
+const movedFrom = (down, e) => (e.clientX - down.x) ** 2 + (e.clientY - down.y) ** 2 > DRAG_PX ** 2;
+
 const SVG = 'http://www.w3.org/2000/svg';
 const NUMBER = new Intl.NumberFormat('en-US');
 const NO_FIELDS = [];
@@ -157,7 +160,11 @@ export class DotGLTip {
       this.raf ||= requestAnimationFrame(() => this.update(tips));
     svg.addEventListener('pointermove', e => {
       this.over = !e.buttons;
-      if (e.buttons) return this.stop(tips);
+      if (e.buttons) {
+        // A pan that comes back to where it started still ends in a click; it stays a drag once it went far.
+        if (this.down?.id === e.pointerId && movedFrom(this.down, e)) this.down.dragged = true;
+        return this.stop(tips);
+      }
       this.clientX = e.clientX;
       this.clientY = e.clientY;
       this.raf ||= requestAnimationFrame(() => this.update(tips));
@@ -175,15 +182,12 @@ export class DotGLTip {
     if (tips.some(t => t.mark.onClick)) {
       svg.addEventListener('pointerdown', e => {
         if (e.button !== 0) return;
-        this.down = { x: e.clientX, y: e.clientY };
+        this.down = { x: e.clientX, y: e.clientY, id: e.pointerId, dragged: false };
       });
       svg.addEventListener('click', e => {
         const down = this.down;
         this.down = null;
-        if (!down) return;
-        const dx = e.clientX - down.x;
-        const dy = e.clientY - down.y;
-        if (dx * dx + dy * dy > DRAG_PX * DRAG_PX) return;
+        if (!down || down.dragged || movedFrom(down, e)) return;
         this.click(tips, e.clientX, e.clientY);
       });
     }
@@ -247,7 +251,8 @@ export class DotGLTip {
   update(tips) {
     this.raf = 0;
     if (!tips.some(t => t.showTip)) return;
-    const picked = this.pick(tips, this.clientX, this.clientY, true);
+    // A mark with only onClick shows nothing on hover, so it can't take the hover from a mark with a tip.
+    const picked = this.pick(tips.filter(t => t.showTip), this.clientX, this.clientY, true);
     if (!picked) return;
     const { hit, owner } = picked;
     for (const tip of tips) if (tip !== owner) tip.hide();

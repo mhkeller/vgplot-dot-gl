@@ -302,6 +302,13 @@ describe('DotGLMark: key and tip', () => {
     expect(() => new DotGLMark({ table: 'trades' }, { x: 'size', y: 'price', tip: true })).not.toThrow();
   });
 
+  it('throws for onClick without a key or a database table', () => {
+    const onClick = () => {};
+    expect(() => new DotGLMark({ table: 'trades' }, { x: 'size', y: 'price', onClick })).toThrow('dotGL: onClick needs a key column');
+    expect(() => new DotGLMark(table(10), { x: 'size', y: 'price', key: 'size', onClick })).toThrow('dotGL: onClick needs a database table');
+    expect(() => new DotGLMark({ table: 'trades' }, { x: 'size', y: 'price', key: 'id', onClick })).not.toThrow();
+  });
+
 });
 
 describe('DotGLMark: groupby', () => {

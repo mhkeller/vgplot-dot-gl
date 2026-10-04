@@ -6,7 +6,7 @@
 
 **Added**
 
-- **`onClick` option.** Pass a function and it runs whenever someone clicks a dot. It gets an object holding that dot's `key` value, so you can tell which row was clicked. Clicking empty space doesn't call it, and neither does releasing the mouse at the end of a pan. You can use `onClick` without `tip`. In that case clicks still find the dot, but no tooltip or highlight ring appears on hover.
+- **`onClick` option.** Pass a function and it runs whenever someone clicks a dot. It gets an object holding that dot's `key` value, so you can tell which row was clicked. Clicking empty space doesn't call it, and neither does releasing the mouse at the end of a pan. It needs a `key` and database data, like `tip.fields`. You can use `onClick` without `tip`. In that case clicks still find the dot, but no tooltip or highlight ring appears on hover.
 
 # 1.0.0
 

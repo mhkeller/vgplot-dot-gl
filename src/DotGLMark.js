@@ -101,7 +101,7 @@ function categorySQL(col, cats) {
  * - tip: true, or `{ fields, maxRadius }`, shows a tooltip for the dot under the pointer;
  *   `fields` (an array of column names, or a Param holding one) are looked up by key
  * - onClick: a function called with `{ key }` when a dot is clicked. Clicks on empty space
- *   and clicks that end a pan drag don't call it. Set `key` to know which row was clicked.
+ *   and clicks that end a pan drag don't call it. Needs `key` and a database table.
  *
  * The x, y and fill columns are handled by their database type. Number and date
  * columns come back as doubles (dates as epoch milliseconds). Text and boolean
@@ -129,9 +129,11 @@ export class DotGLMark extends Mark {
       throw new Error("dotGL: sort must be '-r' or null (use orderby to set the draw order)");
     }
     if (own.tip?.fields && own.key == null) throw new Error('dotGL: tip.fields needs a key column');
+    if (own.onClick && own.key == null) throw new Error('dotGL: onClick needs a key column');
     const groupby = own.groupby == null ? [] : [own.groupby].flat();
     super('dot', source, rest);
     if (own.tip?.fields && this.hasOwnData()) throw new Error('dotGL: tip.fields needs a database table');
+    if (own.onClick && this.hasOwnData()) throw new Error('dotGL: onClick needs a database table');
     if (groupby.length && this.hasOwnData()) throw new Error('dotGL: groupby needs a database table');
     for (const c of this.channels) {
       if (c.field && !COLUMN_CHANNELS.includes(c.channel)) {
