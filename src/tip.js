@@ -16,6 +16,12 @@ const QUIET_MS = 150;
 /** How long the pointer rests on a dot before its extra fields are looked up. */
 const REST_MS = 100;
 
+/** A click that moved farther than this from its pointerdown is a drag, not a pick. */
+const DRAG_PX = 4;
+
+/** Whether a pointer event is farther than DRAG_PX from the pointerdown `down`. */
+const movedFrom = (down, e) => (e.clientX - down.x) ** 2 + (e.clientY - down.y) ** 2 > DRAG_PX ** 2;
+
 const SVG = 'http://www.w3.org/2000/svg';
 const NUMBER = new Intl.NumberFormat('en-US');
 const NO_FIELDS = [];
@@ -91,16 +97,20 @@ function format(value, kind, fmt) {
 }
 
 /**
- * The tooltip of a DotGLMark, added to its plot as a Mosaic interactor. It finds the
- * dot under the pointer in what the mark last painted, rings it, and shows its group
- * columns, x, y, fill and r next to it. Extra fields are looked up by key, one row at a time, once
- * the pointer rests, and kept in `mark.tipRows`.
+ * The tooltip / click picker of a DotGLMark, added to its plot as a Mosaic interactor.
+ * It finds the dot under the pointer in what the mark last painted. With `mark.tip`, it
+ * rings that dot and shows its group columns, x, y, fill and r next to it; extra fields
+ * are looked up by key once the pointer rests, and kept in `mark.tipRows`. With
+ * `mark.onClick`, a click on a dot calls it with `{ key }`. A click on empty space, or
+ * one that ends a pan drag, calls nothing.
  */
 export class DotGLTip {
   constructor(mark, { fields = null, maxRadius = 40 } = {}) {
     this.mark = mark;
     this.fields = fields;
     this.maxRadius = maxRadius;
+    /** A mark with only `onClick` gets a tip that picks for clicks but draws no ring or tip. */
+    this.showTip = !!mark.tip;
     /** Columns the tip shows from the mark's own data. Extra fields with these names are left out. */
     this.names = ['x', 'y', 'fill', 'r']
       .map(name => mark.channelField(name, { exact: true })?.as)
@@ -130,6 +140,8 @@ export class DotGLTip {
     this.restTimer = null;
     this.busy = false;
     this.warned = false;
+    /** Screen position of the last primary pointerdown, for drag vs click. */
+    this.down = null;
   }
 
   /**
@@ -148,7 +160,11 @@ export class DotGLTip {
       this.raf ||= requestAnimationFrame(() => this.update(tips));
     svg.addEventListener('pointermove', e => {
       this.over = !e.buttons;
-      if (e.buttons) return this.stop(tips);
+      if (e.buttons) {
+        // A pan that comes back to where it started still ends in a click; it stays a drag once it went far.
+        if (this.down?.id === e.pointerId && movedFrom(this.down, e)) this.down.dragged = true;
+        return this.stop(tips);
+      }
       this.clientX = e.clientX;
       this.clientY = e.clientY;
       this.raf ||= requestAnimationFrame(() => this.update(tips));
@@ -163,6 +179,18 @@ export class DotGLTip {
       el.addEventListener('pointerleave', this.leave);
     }
     svg.addEventListener('pointerleave', this.leave);
+    if (tips.some(t => t.mark.onClick)) {
+      svg.addEventListener('pointerdown', e => {
+        if (e.button !== 0) return;
+        this.down = { x: e.clientX, y: e.clientY, id: e.pointerId, dragged: false };
+      });
+      svg.addEventListener('click', e => {
+        const down = this.down;
+        this.down = null;
+        if (!down || down.dragged || movedFrom(down, e)) return;
+        this.click(tips, e.clientX, e.clientY);
+      });
+    }
   }
 
   /** Hides every tip on the plot and drops the pick waiting to run. */
@@ -173,10 +201,13 @@ export class DotGLTip {
     this.raf = 0;
   }
 
-  /** Picks the dot under the last pointer position in each tip's mark and shows the closest. On a tie the later mark, drawn on top, wins. */
-  update(tips) {
-    this.raf = 0;
-    const at = new DOMPoint(this.clientX, this.clientY).matrixTransform(
+  /**
+   * The closest dot under (clientX, clientY) across the tips' marks, as `{ hit, owner }`. On a tie the later mark,
+   * drawn on top, wins. With `quiet`, a paint younger than QUIET_MS gets no index yet: `update` is scheduled for
+   * later and this returns undefined. A click builds the index at once, so it hits during that wait.
+   */
+  pick(tips, clientX, clientY, quiet) {
+    const at = new DOMPoint(clientX, clientY).matrixTransform(
       this.svg.getScreenCTM().inverse(),
     );
     let best = null;
@@ -187,7 +218,7 @@ export class DotGLTip {
       if (mark.destroyed || !paint || paint.prep !== mark.prep) continue;
       if (tip.index?.paint !== paint) {
         const wait = QUIET_MS - (performance.now() - paint.at);
-        if (wait > 0) {
+        if (quiet && wait > 0) {
           clearTimeout(this.quietTimer);
           this.quietTimer = setTimeout(() => this.update(tips), wait);
           return;
@@ -205,12 +236,32 @@ export class DotGLTip {
         owner = tip;
       }
     }
+    return { hit: best, owner };
+  }
+
+  /** Calls the clicked dot's mark's `onClick` with `{ key }`. A click on empty space calls nothing. */
+  click(tips, clientX, clientY) {
+    const { hit, owner } = this.pick(tips, clientX, clientY, false);
+    if (!owner) return;
+    const { mark } = owner;
+    mark.onClick?.({ key: mark.data.columns[KEY_AS]?.[hit.j] });
+  }
+
+  /** Shows the tip for the dot under the last pointer position. */
+  update(tips) {
+    this.raf = 0;
+    if (!tips.some(t => t.showTip)) return;
+    // A mark with only onClick shows nothing on hover, so it can't take the hover from a mark with a tip.
+    const picked = this.pick(tips.filter(t => t.showTip), this.clientX, this.clientY, true);
+    if (!picked) return;
+    const { hit, owner } = picked;
     for (const tip of tips) if (tip !== owner) tip.hide();
-    if (owner && best.j !== owner.shown?.j) owner.show(best);
+    if (owner && hit.j !== owner.shown?.j) owner.show(hit);
   }
 
   /** Rings the picked dot, shows its tip, and starts the rest timer for its extra fields when they aren't known yet. */
   show(hit) {
+    if (!this.showTip) return;
     const { mark, svg } = this;
     const { frame } = this.index.paint;
     const doc = svg.ownerDocument;

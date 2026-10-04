@@ -62,19 +62,38 @@ function hovered(columns, options, { types = {}, sqlTypes = {}, categories = {},
   const svg = render();
   const tip = plot.interactors[0];
 
-  /** Moves the pointer onto row j's dot in a mark, with any `buttons` held. */
-  const moveTo = (j, { on = mark, buttons = 0 } = {}) => {
+  /** Client coords of row j's dot in a mark. */
+  const at = (j, { on = mark } = {}) => {
     const { sx, sy, frame, prep } = on.lastPaint;
     const x = columns[on.channelField('x', { exact: true }).as][j];
     const y = columns[on.channelField('y', { exact: true }).as][j];
-    const clientX = sx.apply(prep.xCats ? prep.xCats[x] : x) + frame.offset;
-    const clientY = sy.apply(y) + frame.offset;
-    element.querySelector('svg').dispatchEvent(new PointerEvent('pointermove', { clientX, clientY, buttons }));
+    return {
+      clientX: sx.apply(prep.xCats ? prep.xCats[x] : x) + frame.offset,
+      clientY: sy.apply(y) + frame.offset,
+    };
+  };
+  /** Moves the pointer onto row j's dot in a mark, with any `buttons` held. */
+  const moveTo = (j, { on = mark, buttons = 0 } = {}) => {
+    element.querySelector('svg').dispatchEvent(new PointerEvent('pointermove', { ...at(j, { on }), buttons }));
+  };
+  /** pointerdown + click at row j, or at absolute client coords. A `drag` shifts the click; `via` lists the offsets of pressed moves between them. */
+  const clickAt = (jOrPos, { on = mark, drag = [0, 0], via = [] } = {}) => {
+    const pos = typeof jOrPos === 'number' ? at(jOrPos, { on }) : jOrPos;
+    const svg = element.querySelector('svg');
+    svg.dispatchEvent(new PointerEvent('pointerdown', { clientX: pos.clientX, clientY: pos.clientY, button: 0 }));
+    for (const [dx, dy] of via) {
+      svg.dispatchEvent(new PointerEvent('pointermove', { clientX: pos.clientX + dx, clientY: pos.clientY + dy, buttons: 1 }));
+    }
+    svg.dispatchEvent(new PointerEvent('click', {
+      clientX: pos.clientX + drag[0],
+      clientY: pos.clientY + drag[1],
+      button: 0,
+    }));
   };
   /** The tip's rows as [label, text] pairs. */
   const rows = () => [...element.querySelectorAll('.dotgl-tip tr')].map(tr => [tr.cells[0].textContent, tr.cells[1].textContent]);
   const cell = label => rows().find(([l]) => l === label)?.[1];
-  return { mark, tip, tips: plot.interactors, svg, element, calls: mark.coordinator.calls, moveTo, rows, cell, render };
+  return { mark, tip, tips: plot.interactors, svg, element, calls: mark.coordinator.calls, moveTo, clickAt, rows, cell, render };
 }
 
 /** Ten dots in a row, far enough apart that the pointer on one never picks another. */
@@ -478,5 +497,59 @@ describe('DotGLTip', () => {
     calls[0].resolve([{ tod: 34215000 }], [{ typeId: 9, unit: 1 }]);
     await vi.advanceTimersByTimeAsync(20);
     expect(cell('tod')).toBe('09:30:15');
+  });
+
+  it('is added by the mark when only onClick is set, with no tip UI', async () => {
+    const onClick = vi.fn();
+    const { tip, element, clickAt } = hovered(line(), { x: 'a', y: 'b', r: 3, onClick });
+    expect(tip).toBeInstanceOf(DotGLTip);
+    expect(tip.showTip).toBe(false);
+    await vi.advanceTimersByTimeAsync(200);
+    clickAt(2);
+    expect(onClick).toHaveBeenCalledWith({ key: 102 });
+    expect(element.querySelector('.dotgl-tip')).toBeNull();
+    expect(element.querySelector('circle.dotgl-ring')).toBeNull();
+  });
+
+  it('calls onClick with the dot key, and not at all on empty space', async () => {
+    const onClick = vi.fn();
+    const { clickAt } = hovered(line(), { x: 'a', y: 'b', r: 3, tip: true, onClick });
+    await vi.advanceTimersByTimeAsync(200);
+    clickAt(4);
+    expect(onClick).toHaveBeenCalledWith({ key: 104 });
+    onClick.mockClear();
+    // Far from every dot in the line.
+    clickAt({ clientX: 2, clientY: 2 });
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it('ignores a click that ends a pan drag', async () => {
+    const onClick = vi.fn();
+    const { clickAt } = hovered(line(), { x: 'a', y: 'b', r: 3, onClick });
+    await vi.advanceTimersByTimeAsync(200);
+    clickAt(3, { drag: [10, 0] });
+    expect(onClick).not.toHaveBeenCalled();
+    clickAt(3, { drag: [3, 0] });
+    expect(onClick).toHaveBeenCalledWith({ key: 103 });
+  });
+
+  it('ignores a click after a pan that went far and came back', async () => {
+    const onClick = vi.fn();
+    const { clickAt } = hovered(line(), { x: 'a', y: 'b', r: 3, onClick });
+    await vi.advanceTimersByTimeAsync(200);
+    clickAt(3, { via: [[20, 0], [0, 0]] });
+    expect(onClick).not.toHaveBeenCalled();
+    clickAt(3, { via: [[2, 0]] });
+    expect(onClick).toHaveBeenCalledWith({ key: 103 });
+  });
+
+  it('a mark with only onClick, drawn on top, leaves the hover to the mark with a tip', async () => {
+    const second = { x: 'a', y: 'b', r: 3, onClick: () => {} };
+    const { tips, element, moveTo } = hovered(line(), { x: 'a', y: 'b', r: 3, tip: true }, { second });
+    await vi.advanceTimersByTimeAsync(200);
+    moveTo(2);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(tips.map(t => t.shown?.j ?? null)).toEqual([2, null]);
+    expect(element.querySelector('.dotgl-tip')).not.toBeNull();
   });
 });

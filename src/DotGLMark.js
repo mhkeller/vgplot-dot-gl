@@ -12,7 +12,7 @@ import { DotGLTip, KEY_AS } from './tip.js';
 const SVG = 'http://www.w3.org/2000/svg';
 
 /** Options that are ours. They never become Mosaic channels or Plot options; the mark adds `key`, `groupby` and `orderby` to its query itself. */
-const OWN_OPTIONS = ['blit', 'sort', 'orderby', 'maxCategories', 'benchmark', 'fragmentBudget', 'key', 'groupby', 'tip'];
+const OWN_OPTIONS = ['blit', 'sort', 'orderby', 'maxCategories', 'benchmark', 'fragmentBudget', 'key', 'groupby', 'tip', 'onClick'];
 
 /** Options that used to exist. Without this they would be read as column names, and the error would not say why. */
 const REMOVED_OPTIONS = {
@@ -100,6 +100,8 @@ function categorySQL(col, cats) {
  *   unless a channel already uses it, and the tooltip shows each one
  * - tip: true, or `{ fields, maxRadius }`, shows a tooltip for the dot under the pointer;
  *   `fields` (an array of column names, or a Param holding one) are looked up by key
+ * - onClick: a function called with `{ key }` when a dot is clicked. Clicks on empty space
+ *   and clicks that end a pan drag don't call it. Needs `key` and a database table.
  *
  * The x, y and fill columns are handled by their database type. Number and date
  * columns come back as doubles (dates as epoch milliseconds). Text and boolean
@@ -127,9 +129,12 @@ export class DotGLMark extends Mark {
       throw new Error("dotGL: sort must be '-r' or null (use orderby to set the draw order)");
     }
     if (own.tip?.fields && own.key == null) throw new Error('dotGL: tip.fields needs a key column');
+    if (own.onClick != null && typeof own.onClick !== 'function') throw new Error('dotGL: onClick must be a function');
+    if (own.onClick && own.key == null) throw new Error('dotGL: onClick needs a key column');
     const groupby = own.groupby == null ? [] : [own.groupby].flat();
     super('dot', source, rest);
     if (own.tip?.fields && this.hasOwnData()) throw new Error('dotGL: tip.fields needs a database table');
+    if (own.onClick && this.hasOwnData()) throw new Error('dotGL: onClick needs a database table');
     if (groupby.length && this.hasOwnData()) throw new Error('dotGL: groupby needs a database table');
     for (const c of this.channels) {
       if (c.field && !COLUMN_CHANNELS.includes(c.channel)) {
@@ -158,6 +163,7 @@ export class DotGLMark extends Mark {
       return { field, name, as };
     });
     this.tip = own.tip ? (own.tip === true ? {} : own.tip) : null;
+    this.onClick = own.onClick ?? null;
     /** Extra tooltip fields by key, filled in by the tooltip. */
     this.tipRows = new Map();
     this.refineTimer = null;
@@ -173,10 +179,10 @@ export class DotGLMark extends Mark {
     this.render = this.render.bind(this);
   }
 
-  /** Mosaic calls this when the mark joins a plot. With `tip` set, the mark brings its own tooltip interactor. */
+  /** Mosaic calls this when the mark joins a plot. With `tip` or `onClick`, the mark brings its own pick interactor. */
   setPlot(plot, index) {
     super.setPlot(plot, index);
-    if (this.tip) plot.addInteractor(new DotGLTip(this, this.tip));
+    if (this.tip || this.onClick) plot.addInteractor(new DotGLTip(this, this.tip ?? {}));
   }
 
   /**

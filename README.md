@@ -81,7 +81,7 @@ Several of this mark's features work by adding to the SQL query, so array data, 
 
 - A text or boolean `x` or `y` throws, because the list of categories comes from the database.
 - A text `fill` takes at most 254 values (65,535 with database data).
-- `groupby` and `tip.fields` throw when the mark is created.
+- `groupby`, `tip.fields` and `onClick` throw when the mark is created.
 
 ## Options
 
@@ -105,9 +105,10 @@ Options only this mark has. The mark reads these itself, so Mosaic and Plot don'
 | `maxCategories` | `65535` | how many different fill values a database column may have (65,535 at most; array data allows 254) |
 | `benchmark` | `false` | wait for the graphics card after each draw so `mark.stats` shows real times (slows everything; only for measuring) |
 | `fragmentBudget` | `4e7` | roughly how many pixels one frame may paint, counting the whole square each dot sits in. A frame over the budget is drawn at a lower resolution, which is what keeps zooming smooth. Once you stop moving for 150 ms, the mark draws it again at full resolution. Big dots on a high-resolution screen cross the budget first. `Infinity` means always draw at full resolution. `mark.stats.estimate` is the count for the last frame. |
-| `key` | `null` | a unique row id: a column name or an expression such as `vg.int32('id')`. It comes back with the data under a private name, and the tooltip looks up extra fields by it. It's only needed when `tip.fields` is set (which are additional fields to show in the tooltip). Without it, the tooltip shows the dot's x, y, fill, r and groupby values. The `key` must be unique per row or the extra fields may come from a different row than the one under the pointer (see [Hover and tooltips](#hover-and-tooltips) for more). |
+| `key` | `null` | a unique row id: a column name or an expression such as `vg.int32('id')`. It comes back with the data under a private name; `onClick` returns it, and the tooltip looks up extra fields by it. It's needed when `tip.fields` or `onClick` is set. Without it, the tooltip shows the dot's x, y, fill, r and groupby values. The `key` must be unique per row or the extra fields may come from a different row than the one under the pointer (see [Hover and tooltips](#hover-and-tooltips) for more). |
 | `groupby` | `null` | a column name, `vg.column()`, a `vg.sql` expression, or a list of them. Draws one dot per group of rows, for marks with an aggregate channel such as `x: vg.avg('price')`. Needs a database connection, not just plain JSON data. See [Grouping](#grouping). |
 | `tip` | `null` | `true`, or `{ fields, maxRadius }`, shows a tooltip for the dot under the pointer (see [Hover and tooltips](#hover-and-tooltips)) |
+| `onClick` | `null` | a function called with `{ key }` when a dot is clicked. Needs `key` and database data (see [Clicks](#clicks)) |
 
 After each draw `mark.stats` is `{ painter, drawn, uploadMs, drawMs, blitMs, dpr, reduced, estimate }`. On a browser without WebGL2 it has only `painter`, `drawn` and `drawMs`. After the full-resolution redraw it also has `refined: true`, and the plot element fires a `dotgl-refine` event.
 
@@ -134,6 +135,22 @@ The values in that table come from two places. To draw the plot, the mark asked 
 `fields` adds more columns to the table. Once the pointer rests on a dot for 100 ms, the mark runs `SELECT <fields> FROM <table> WHERE <key> = <the dot's key> LIMIT 1`, one lookup at a time, and keeps the answers until the table changes. `fields` can be a Param holding the list, so the page can change the list without rebuilding the plot. `fields` needs a `key` and database data (see [Where the rows come from](#where-the-rows-come-from)).
 
 Because of that `LIMIT 1`, **the key has to be unique**. If two rows share a key, the lookup takes whichever the database hands back first. A primary key, a row id, or anything you would trust in a `WHERE` clause to name one row is fine. If the table has no such column, add one when you load it, for example `row_number() OVER () AS id`.
+
+### Clicks
+
+```js
+dotGL(vg.from('trades'), {
+  x: 'size',
+  y: 'price',
+  key: vg.int32('id'),
+  tip: true,
+  onClick: hit => console.log(hit) // { key: 42 }
+})
+```
+
+When you click a dot, `onClick` gets an object holding that dot's value from the `key` column, so you can tell which row was clicked. It needs a `key` and database data, and throws when the mark is created without them. Clicking empty space doesn't call it. Neither does letting go of the mouse at the end of a pan: a click that moved more than a few pixels from where the button went down counts as a drag, even when the pointer comes back before the button goes up. The mark finds the clicked dot the same way the tooltip finds the hovered one.
+
+You can use `onClick` without `tip`. Clicks still find the dot, but nothing appears on hover.
 
 ### Dates in the tooltip
 
