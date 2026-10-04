@@ -21,6 +21,8 @@ export interface DotGLOptions {
   groupby?: GroupByExpr | null;
   /** Show a tooltip for the dot under the pointer. `fields` (column names, or a Param holding them) need `key` and a database table; `maxRadius` defaults to 40 px. */
   tip?: boolean | { fields?: string[] | { value: string[] }; maxRadius?: number };
+  /** Called with `{ key }` when a dot is clicked, holding the dot's value from the mark's `key` column. Clicks on empty space and clicks that end a pan drag don't call it. */
+  onClick?: (hit: { key: unknown }) => void;
   [option: string]: unknown;
 }
 
