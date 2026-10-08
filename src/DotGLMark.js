@@ -307,7 +307,11 @@ export class DotGLMark extends Mark {
     const columns = this.data?.columns;
     if (!columns) throw new Error('dotGL: expected columnar data');
     const field = name => this.channelField(name, { exact: true });
-    const column = name => (field(name) ? columns[field(name).as] : null);
+    // A query that keeps no rows can come back with no columns at all: DuckDB's `to_arrow_ipc` sends
+    // nothing for an empty result, so the decoded table has no fields. Each channel then reads as an
+    // empty column and nothing is drawn.
+    const none = this.data.numRows === 0 ? new Float64Array(0) : null;
+    const column = name => (field(name) ? columns[field(name).as] ?? none : null);
     const cats = name => (field(name) ? this.categories.get(field(name).as)?.cats ?? null : null);
     const type = name => field(name)?.type;
     // The SQL type for a date column, so the tooltip can tell a date from a timestamp from a time.

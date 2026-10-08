@@ -594,6 +594,23 @@ describe('DotGLMark: drawing', () => {
     expect(fig.scale('color').domain).toEqual(['p', 'q']);
   });
 
+  it('draws nothing from an empty result that has no columns, as DuckDB sends when a filter keeps no rows', async () => {
+    const mark = await prepared(
+      { x: 'letter', y: 'price', r: 'size', fill: 'name' },
+      { '"letter"': 'VARCHAR', '"price"': 'DOUBLE', '"size"': 'DOUBLE', '"name"': 'VARCHAR' },
+      { letter: letters, name: ['p', 'q'] }
+    );
+    mark.data = { numRows: 0, columns: {} };
+    expect(() => mark.plotSpecs()).not.toThrow();
+    expect(mark.prep.n).toBe(0);
+  });
+
+  it('still throws for a result with rows but no x or y column', async () => {
+    const mark = await prepared({ x: 'price', y: 'size' }, { '"price"': 'DOUBLE', '"size"': 'DOUBLE' });
+    mark.data = { numRows: 2, columns: { price: new Float64Array([1, 2]) } };
+    expect(() => mark.plotSpecs()).toThrow('x and y must be columns');
+  });
+
   it('colors a boolean fill by value, as vg.dot does, so filtering out false leaves true its color', async () => {
     const booleans = { letters, names: [false, true] };
     const rows = allRows.map((r, i) => ({ ...r, fill: i % 3 === 0 }));

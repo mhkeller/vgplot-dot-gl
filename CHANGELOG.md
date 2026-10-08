@@ -1,5 +1,13 @@
 # Changelog
 
+# 1.1.1
+
+> 2026-10-11
+
+**Fixed**
+
+- **A filter that keeps no rows no longer breaks the plot.** DuckDB answers a query with no rows with a result that has no columns at all, and the mark threw `dotGL: x and y must be columns`. It now draws nothing, as `vg.dot` does.
+
 # 1.1.0
 
 > 2026-10-04
