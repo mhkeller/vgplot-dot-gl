@@ -1,6 +1,6 @@
 {
   "name": "@mhkeller/vgplot-dot-gl",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "A WebgL drop-in for vgplot's dot mark: same API, hundreds of thousands of points, axes/legends/interactors unchanged.",
   "keywords": [
     "mosaic",
