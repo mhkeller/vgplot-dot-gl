@@ -6,7 +6,7 @@
 
 **Fixed**
 
-- **A filtered set with no rows no longer breaks the plot.** DuckDB threw an error because there were no columns: `dotGL: x and y must be columns`. It now draws nothing, as `vg.dot` does.
+- **An empty filtered set no longer breaks the plot.** DuckDB threw an error because there were no columns: `dotGL: x and y must be columns`. It now draws nothing, as `vg.dot` does.
 
 # 1.1.0
 
