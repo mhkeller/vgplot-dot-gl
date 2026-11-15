@@ -6,7 +6,7 @@
 
 **Changed**
 
-- **Needs Mosaic 0.35.** The peer dependencies `@uwdata/mosaic-core`, `@uwdata/mosaic-plot` and `@uwdata/mosaic-sql` are `^0.35.0`. For Mosaic 0.31, use 1.1.1.
+- **Needs Mosaic 0.35 or a later 0.x release.** The peer dependencies `@uwdata/mosaic-core`, `@uwdata/mosaic-plot` and `@uwdata/mosaic-sql` are `>=0.35.0 <1`, so dotGL 2.0.0 also installs next to later 0.x releases of Mosaic. The tests run against 0.35. For Mosaic 0.31, use 1.1.1.
 
 **Fixed**
 
