@@ -1,5 +1,26 @@
 # Changelog
 
+# 2.0.0
+
+> 2026-11-15
+
+**Changed**
+
+- **Needs Mosaic 0.35.** The peer dependencies `@uwdata/mosaic-core`, `@uwdata/mosaic-plot` and `@uwdata/mosaic-sql` are `^0.35.0`. For Mosaic 0.31, use 1.1.1.
+
+**Fixed**
+
+- **A `select` option no longer takes clicks or stops the plot from drawing.** dotGL warned that it ignores `select`, but still handed it to Plot. With `'nearest'`, `'nearestX'` or `'nearestY'`, Mosaic then added Plot's pointer. The pointer took any click within about 40 pixels of the middle of the plot, and the click after it, so `onClick` didn't run for them. It also made dotGL redraw all its dots each time. With `'minX'`, `'maxX'`, `'minY'` or `'maxY'`, the plot threw `missing channel: x` (or `y`) and didn't draw. `select` now only logs the warning.
+
+**From Mosaic 0.35**
+
+These come from Mosaic itself. The first three show in `vg.dot` plots too.
+
+- **A `TIMESTAMPTZ` column on `x` or `y` gets a local-time axis** when the plot doesn't set that scale's type. The tooltip still shows the time in UTC. `vg.xScale('utc')` or `vg.yScale('utc')` gives the UTC axis back.
+- **`vg.bin` on a log axis loses the bins that start at 1 or below.** Mosaic 0.35 turns their edges into zero or negative numbers, which a log axis can't show. This is a bug in Mosaic.
+- **A `vg.region` drawn over empty space filters out every row** of the plots it filters. In 0.31 it filtered none.
+- **`coordinator.clear()` right after creating a dotGL plot stops the plot from drawing.** The clear cancels the queries that look up the plot's column types, so dotGL treats its text and date columns as numbers, and its data query fails. Call `clear()` before you create plots, or after they have drawn.
+
 # 1.1.1
 
 > 2026-10-11

@@ -20,7 +20,10 @@ const REMOVED_OPTIONS = {
   fallback: 'dotGL always draws with WebGL2 now, and falls back to a plain canvas on its own'
 };
 
-/** vg.dot options we accept as constants but can't draw. We warn once per mark. */
+/**
+ * vg.dot options we accept as constants but can't draw. We warn once per mark and leave them out of the Plot spec:
+ * a `select` there would make Mosaic add Plot's pointer to the dot, and the pointer stops some clicks from reaching onClick.
+ */
 const IGNORED_OPTIONS = ['stroke', 'strokeWidth', 'strokeOpacity', 'symbol', 'rotate', 'dx', 'dy', 'title', 'href', 'select', 'frameAnchor'];
 
 /** The only options that can be a column. */
@@ -358,7 +361,7 @@ export class DotGLMark extends Mark {
     const options = { sort: null, render: this.render, frameAnchor: 'middle', channels: {} };
     for (const c of this.channels) {
       if (Object.hasOwn(c, 'value')) {
-        options[c.channel] = c.value;
+        if (!IGNORED_OPTIONS.includes(c.channel)) options[c.channel] = c.value;
         continue;
       }
       if (!HINTS[c.channel]) throw new Error(`dotGL: the "${c.channel}" option cannot be bound to a column`);
