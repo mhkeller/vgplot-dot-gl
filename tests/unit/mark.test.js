@@ -215,6 +215,24 @@ describe('DotGLMark: more review fixes', () => {
     expect(warnings[0]).toMatch(/stroke, symbol/);
   });
 
+  it('leaves the options it ignores out of the Plot spec, so select adds no Plot pointer', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const mark = new DotGLMark(table(20), { x: 'size', y: 'price', select: 'nearestY', frameAnchor: 'top', stroke: 'red', opacity: 0.5 });
+      const [{ options }] = mark.plotSpecs();
+      expect(warn).toHaveBeenCalledOnce();
+      expect(warn.mock.calls[0][0]).toMatch(/stroke, select, frameAnchor/);
+      // Mosaic reads `select` from these options and wraps the dot in Plot's pointer for 'nearest', 'nearestX' and 'nearestY'.
+      expect(options).not.toHaveProperty('select');
+      expect(options).not.toHaveProperty('stroke');
+      // The mark's own frameAnchor stays, and other constants still reach Plot.
+      expect(options.frameAnchor).toBe('middle');
+      expect(options.opacity).toBe(0.5);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('folds fillOpacity into the painted opacity and drops data on destroy', () => {
     const mark = new DotGLMark(table(20), { x: 'size', y: 'price', opacity: 0.5, fillOpacity: 0.5 });
     expect(mark.constant('opacity') * mark.constant('fillOpacity')).toBe(0.25);

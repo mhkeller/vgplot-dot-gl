@@ -13,8 +13,8 @@ importers:
         version: 3.1.0
     devDependencies:
       '@duckdb/duckdb-wasm':
-        specifier: 1.33.1-dev57.0
-        version: 1.33.1-dev57.0
+        specifier: 1.33.1-dev114.0
+        version: 1.33.1-dev114.0
       '@observablehq/plot':
         specifier: ^0.6.17
         version: 0.6.17
@@ -22,17 +22,17 @@ importers:
         specifier: ^1.63.0
         version: 1.63.0
       '@uwdata/mosaic-core':
-        specifier: ^0.31.0
-        version: 0.31.0
+        specifier: ^0.35.0
+        version: 0.35.0
       '@uwdata/mosaic-plot':
-        specifier: ^0.31.0
-        version: 0.31.0
+        specifier: ^0.35.0
+        version: 0.35.0
       '@uwdata/mosaic-sql':
-        specifier: 0.31.0
-        version: 0.31.0
+        specifier: ^0.35.0
+        version: 0.35.0
       '@uwdata/vgplot':
-        specifier: ^0.31.0
-        version: 0.31.0
+        specifier: ^0.35.0
+        version: 0.35.0
       d3-array:
         specifier: ^3.2.4
         version: 3.2.4
@@ -99,8 +99,8 @@ packages:
     resolution: {integrity: sha512-QxULHAm7cNu72w97JUNCBFODFaXpbDg+dP8b/oWFAZ2MTRppA3U00Y2L1HqaS4J6yBqxwa/Y3nMBaxVKbB/NsA==}
     engines: {node: '>=20.19.0'}
 
-  '@duckdb/duckdb-wasm@1.33.1-dev57.0':
-    resolution: {integrity: sha512-ndn5l2EHq1PEMvCg8G6lRV0vjhSUcbqdM/niNBTTqH4/PyyUUVKbge0uUyCnj27b9SF/CiqBwDsgKLTqBvaxdw==}
+  '@duckdb/duckdb-wasm@1.33.1-dev114.0':
+    resolution: {integrity: sha512-0sk+bv9iY7GuDQ0n0BlXBO6FucZ8PPVzGswOJh6kXoGuPe0SJRc49oyn+PNcz2JNE2XmD+Wi60fRUjTloHn6bw==}
 
   '@exodus/bytes@1.15.1':
     resolution: {integrity: sha512-S6mL0yNB/Abt9Ei4tq8gDhcczc4S3+vQ4ra7vxnAf+YHC02srtqxKKZghx2Dq6p0e66THKwR6r8N6P95wEty7Q==}
@@ -256,28 +256,31 @@ packages:
   '@types/node@25.9.6':
     resolution: {integrity: sha512-JR6Q/PV5DKFvjrGFVqQJdeG0qvsqQQLDa3TzFrqVwhqRXqwNaxPo2KYCtCQXpOdIulCouKwT7a6in9nFthBAzw==}
 
-  '@uwdata/flechette@2.5.0':
-    resolution: {integrity: sha512-NSB9xIPVsxpEcnEvtLfbvH/tEqZWiD4bfdz/yBUAUBEe0Z0C3zmA/Y4GOCsLZe4ChxiHaedFBZzVdUxQ+NVcMA==}
+  '@uwdata/flechette@2.7.1':
+    resolution: {integrity: sha512-7rj4kkFmeePTuspAz5r/k0Esa18JplC5c5uLsaKQWmSBY2+SGdKRJRSqiRaA8HI19lfjh6+VSBXXyne0iVG68Q==}
 
-  '@uwdata/mosaic-core@0.31.0':
-    resolution: {integrity: sha512-lbpxbhLo6+pMWmJsOC8MPPlLmI7U9odbyls0P8XMl0G3zpIaul1sTGU1PE3rAz74Z9EkIFI5L8zdH06crsVTEw==}
+  '@uwdata/mosaic-core@0.35.0':
+    resolution: {integrity: sha512-lTcEio+6FwdPA/Z2nt6SBmvCkku9aNRxPSbgPIlMgHKfmQDyE0RYf0J4Xpd6wTNPN0cx9YIYHk378wKMpoTr8g==}
     peerDependencies:
-      '@uwdata/mosaic-duckdb': ^0.31.0
+      '@uwdata/mosaic-duckdb': ^0.35.0
     peerDependenciesMeta:
       '@uwdata/mosaic-duckdb':
         optional: true
 
-  '@uwdata/mosaic-inputs@0.31.0':
-    resolution: {integrity: sha512-5w+KYXYxMepaHRWouRGUgwQYaJ0ZGvmi+C/jmlWYUSIOSgUUDeUkcUVSkZLKAZW4EfS6Rj8Bcge3YRp9mV+WDA==}
+  '@uwdata/mosaic-inputs@0.35.0':
+    resolution: {integrity: sha512-ZGTna0B+oeN8YMrMw6kcIZxvrUpkRyoY4F3N60G56I/w8HRi8orlpycpej10ESFgGAnSvO4SO4mQBPdy326Ljg==}
 
-  '@uwdata/mosaic-plot@0.31.0':
-    resolution: {integrity: sha512-1okx2wQU7nzQ0SdcazBpkbMaOdemwJUumHOEmmDlwgAR1UwQxEFv8GkZP4h1fLj06JzbjmY8dV1LQedFjqPQeQ==}
+  '@uwdata/mosaic-plot@0.35.0':
+    resolution: {integrity: sha512-gBhcKqI/KOUAQCmjdTUltfgyGZFWqVJetZS2AEKdUpcnBz+gA4Gro4Lms1DUiCYtd4XcAYu4AlrbWkuU+sAyoQ==}
 
-  '@uwdata/mosaic-sql@0.31.0':
-    resolution: {integrity: sha512-2dj3zZ9rtmRl2HrB75gHUcI1CHCKocPSlOvblZaiaZCjDF+7Mn1eNggzmwzDGL+eJMcfu6tzIg2dqtBG9l+reg==}
+  '@uwdata/mosaic-sql@0.35.0':
+    resolution: {integrity: sha512-KDE3dt7bZu4fH5AvNzHe6lpiKvi2BFmSry8jQSwS419sxqAToE//rfFDmCmuhlNi3kcBNYQnytR0YaH6NEHvaA==}
 
-  '@uwdata/vgplot@0.31.0':
-    resolution: {integrity: sha512-Wsk8Kgi0bIWrqUR+kKCB/SRvOEe+8Higa/GJQVnwMu6RWvoTC/C+bdNjJso41iYjKnu6jjFJcoaBEw2jhb2J7w==}
+  '@uwdata/vgplot@0.35.0':
+    resolution: {integrity: sha512-O89XWWyn6y8/wBVCDR0M0pXk1YwQuw0uKjfbRP4aPZjkXhyY9tzQabeADEo6SGgmpgDtEfOlnuL3ciGk2hv7lQ==}
+
+  '@uwdata/wk-geojson@0.0.1':
+    resolution: {integrity: sha512-4RpnKbdrphwzP+BwgzuGRqA/s03oT1rzHAKdU43Ozn8J1BCTwS+2iAGQ7YQAnrCkCi213WtQ7VYaFjVtvZotPQ==}
 
   '@vitest/mocker@5.0.0':
     resolution: {integrity: sha512-66PGTMIiVJP3t4a5yxU9qPtf7MdTBs8jmToMvy+HVflB3Yy13WJZTtPePdvU+wjRV02SKK5doLbSA6o9pwOmiA==}
@@ -1026,7 +1029,7 @@ snapshots:
 
   '@csstools/css-tokenizer@4.0.0': {}
 
-  '@duckdb/duckdb-wasm@1.33.1-dev57.0':
+  '@duckdb/duckdb-wasm@1.33.1-dev114.0':
     dependencies:
       apache-arrow: 17.0.0
       qs: 6.16.0
@@ -1127,41 +1130,45 @@ snapshots:
       undici-types: 7.24.6
     optional: true
 
-  '@uwdata/flechette@2.5.0': {}
-
-  '@uwdata/mosaic-core@0.31.0':
+  '@uwdata/flechette@2.7.1':
     dependencies:
-      '@duckdb/duckdb-wasm': 1.33.1-dev57.0
-      '@uwdata/flechette': 2.5.0
-      '@uwdata/mosaic-sql': 0.31.0
+      '@uwdata/wk-geojson': 0.0.1
 
-  '@uwdata/mosaic-inputs@0.31.0':
+  '@uwdata/mosaic-core@0.35.0':
     dependencies:
-      '@uwdata/mosaic-core': 0.31.0
-      '@uwdata/mosaic-sql': 0.31.0
+      '@duckdb/duckdb-wasm': 1.33.1-dev114.0
+      '@uwdata/flechette': 2.7.1
+      '@uwdata/mosaic-sql': 0.35.0
+
+  '@uwdata/mosaic-inputs@0.35.0':
+    dependencies:
+      '@uwdata/mosaic-core': 0.35.0
+      '@uwdata/mosaic-sql': 0.35.0
     transitivePeerDependencies:
       - '@uwdata/mosaic-duckdb'
 
-  '@uwdata/mosaic-plot@0.31.0':
+  '@uwdata/mosaic-plot@0.35.0':
     dependencies:
       '@observablehq/plot': 0.6.17
-      '@uwdata/flechette': 2.5.0
-      '@uwdata/mosaic-core': 0.31.0
-      '@uwdata/mosaic-sql': 0.31.0
+      '@uwdata/flechette': 2.7.1
+      '@uwdata/mosaic-core': 0.35.0
+      '@uwdata/mosaic-sql': 0.35.0
       d3: 7.9.0
     transitivePeerDependencies:
       - '@uwdata/mosaic-duckdb'
 
-  '@uwdata/mosaic-sql@0.31.0': {}
+  '@uwdata/mosaic-sql@0.35.0': {}
 
-  '@uwdata/vgplot@0.31.0':
+  '@uwdata/vgplot@0.35.0':
     dependencies:
-      '@uwdata/mosaic-core': 0.31.0
-      '@uwdata/mosaic-inputs': 0.31.0
-      '@uwdata/mosaic-plot': 0.31.0
-      '@uwdata/mosaic-sql': 0.31.0
+      '@uwdata/mosaic-core': 0.35.0
+      '@uwdata/mosaic-inputs': 0.35.0
+      '@uwdata/mosaic-plot': 0.35.0
+      '@uwdata/mosaic-sql': 0.35.0
     transitivePeerDependencies:
       - '@uwdata/mosaic-duckdb'
+
+  '@uwdata/wk-geojson@0.0.1': {}
 
   '@vitest/mocker@5.0.0(vite@8.3.0(@types/node@25.9.6))':
     dependencies:

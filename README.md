@@ -28,7 +28,7 @@ vg.plot(
 npm install @mhkeller/vgplot-dot-gl @uwdata/vgplot
 ```
 
-It works with Mosaic 0.31 (`@uwdata/vgplot` 0.31.x). The mark builds on Mosaic's own `Mark` class, so it lists `@uwdata/mosaic-core`, `@uwdata/mosaic-plot` and `@uwdata/mosaic-sql` as peer dependencies.
+It's tested with Mosaic 0.35 (`@uwdata/vgplot` 0.35.x), and its peer range, `>=0.35.0 <1`, allows any later 0.x release. The mark builds on Mosaic's own `Mark` class, so it lists `@uwdata/mosaic-core`, `@uwdata/mosaic-plot` and `@uwdata/mosaic-sql` as peer dependencies.
 
 ## One copy of Mosaic
 
@@ -39,7 +39,7 @@ This matters, though, because Mosaic compares some things by identity. Two copie
 Two situations produce a second copy:
 
 - **A local link**, using `pnpm link`, `npm link` or a `file:` dependency. The linked package looks in its own `node_modules` first, and this repo installs Mosaic to run its tests, so you get two copies by default.
-- **A version mismatch**, where your app is on a Mosaic outside the `^0.31.0` range, so the package manager nests a second copy to satisfy the peer range.
+- **A version mismatch**, where your app is on a Mosaic outside the `>=0.35.0 <1` range. With the install above, npm adds a second copy for this package and prints nothing. pnpm prints an unmet-peer warning and keeps one copy.
 
 The fix that works either way is to tell your bundler to keep one copy. In Vite:
 

@@ -31,7 +31,7 @@ Plot.prototype.render = async function () {
 const coord = vg.coordinator();
 coord.databaseConnector(wasmConnector());
 const exec = sql => coord.exec(sql);
-const query = sql => coord.query(sql, { type: 'json' });
+const query = sql => coord.query(sql).then(t => t.toArray());
 
 async function loadData(n) {
   ui.status.textContent = `creating ${n.toLocaleString()} rows…`;
